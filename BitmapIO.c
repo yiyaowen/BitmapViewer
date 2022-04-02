@@ -1,4 +1,4 @@
-#include "BitmapIO.h"
+﻿#include "BitmapIO.h"
 
 #include <stdio.h>
 
@@ -85,13 +85,32 @@ MyBGRA* myReadBmp(PCWSTR szFileName, MyBmpInfo* pInfo)
         // Move to pixel data start.
         gCurrPos = data + bmpfh.bfOffBits;
 
+        UINT8 bgr[3];
+
         // Store as B G R, B G R, B G R ......
         if (bmpih.biBitCount == 24)
         {
-            for (size_t i = 0; i < nPixelCount; ++i)
+            for (UINT j = 0; j < pInfo->nHeight; ++j)
             {
-                myMemRead(&pixel[i], sizeof(UINT8) * 3);
-                pixel[i].A = 255; // Keep opaque by default.
+                // 3 Bytes for 1 Pixel
+                for (UINT i = 0; i < nRowLength; i += 3)
+                {
+                    // Skip padded zero bytes.
+                    if (i / 3 >= pInfo->nWidth)
+                    {
+                        gCurrPos += (nRowLength - i);
+                        break; // Move to next scan line.
+                    }
+                    myMemRead(bgr, sizeof(UINT8) * 3);
+
+                    // Get pixel index in data.
+                    UINT idx = i / 3 + j * pInfo->nWidth;
+
+                    pixel[idx].B = bgr[0];
+                    pixel[idx].G = bgr[1];
+                    pixel[idx].R = bgr[2];
+                    pixel[idx].A = 255; // Keep opaque by default.
+                }
             }
         }
         // Store as B G R A, B G R A, B G R A ......
@@ -111,23 +130,34 @@ MyBGRA* myReadBmp(PCWSTR szFileName, MyBmpInfo* pInfo)
         // Move to pixel data start.
         gCurrPos = data + bmpfh.bfOffBits;
 
-        UINT16 bgr = 0;
+        UINT16 bgr;
         UINT8 tmpB, tmpG, tmpR;
 
-        for (size_t i = 0; i < nPixelCount; ++i)
+        for (UINT j = 0; j < pInfo->nHeight; ++j)
         {
-            myMemRead(PTR_SIZE_ARG(bgr));
+            // 2 Bytes for 1 Pixel
+            for (UINT i = 0; i < nRowLength; i += 2)
+            {
+                myMemRead(PTR_SIZE_ARG(bgr));
+                // Skip padded zero bytes.
+                if (i / 2 >= pInfo->nWidth) continue;
 
-            tmpB = (bgr & 0x001F) >> 0; // 0000 0000 0001 1111
-            tmpG = (bgr & 0x03E0) >> 5; // 0000 0011 1110 0000
-            tmpR = (bgr & 0x7C00) >> 10;// 0111 1100 0000 0000
+                // Get pixel index in data.
+                UINT idx = i / 2 + j * pInfo->nWidth;
+
+                tmpB = (bgr & 0x001F) >> 0; // 0000 0000 0001 1111
+                tmpG = (bgr & 0x03E0) >> 5; // 0000 0011 1110 0000
+                tmpR = (bgr & 0x7C00) >> 10;// 0111 1100 0000 0000
 
 #define MY_RGB_555_TO_888(X) (((X) << 3) + ((X) & 0x07))
 
-            pixel[i].B = MY_RGB_555_TO_888(tmpB);
-            pixel[i].G = MY_RGB_555_TO_888(tmpG);
-            pixel[i].R = MY_RGB_555_TO_888(tmpR);
-            pixel[i].A = 255; // Keep opaque by default.
+                pixel[idx].B = MY_RGB_555_TO_888(tmpB);
+                pixel[idx].G = MY_RGB_555_TO_888(tmpG);
+                pixel[idx].R = MY_RGB_555_TO_888(tmpR);
+                pixel[idx].A = 255; // Keep opaque by default.
+
+#undef MY_RGB_555_TO_888
+            }
         }
     }
     //-------------------------------------------------------------------------------------------------
@@ -144,7 +174,7 @@ MyBGRA* myReadBmp(PCWSTR szFileName, MyBmpInfo* pInfo)
         // Move to pixel data start.
         gCurrPos = data + bmpfh.bfOffBits;
 
-        UINT8 coloridx = 0;
+        UINT8 coloridx;
 
         // 1 Byte for 8 Pixels
         if (bmpih.biBitCount == 1)
@@ -213,11 +243,11 @@ MyBGRA* myReadBmp(PCWSTR szFileName, MyBmpInfo* pInfo)
                 {
                     // Get color index in palette.
                     myMemRead(PTR_SIZE_ARG(coloridx));
-                    // Get pixel index in data.
-                    UINT idx = i + j * pInfo->nWidth;
-
                     // Skip padded zero bytes.
                     if (i >= pInfo->nWidth) continue;
+
+                    // Get pixel index in data.
+                    UINT idx = i + j * pInfo->nWidth;
 
                     pixel[idx] = palette[coloridx];
                 }
