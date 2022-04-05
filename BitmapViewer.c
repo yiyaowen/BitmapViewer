@@ -4351,8 +4351,8 @@ void myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double d
         {
             idx = i + j * pInfo->nWidth;
             // Apply (-1)^(x+y).
-            buffer[i].real = ((i + j) % 2 == 0) ? pSrc[idx].R : (-pSrc[idx].R);
-            buffer[i].imag = 0; // real number
+            buffer[idx].real = ((i + j) % 2 == 0) ? pSrc[idx].R : (-pSrc[idx].R);
+            buffer[idx].imag = 0; // real number
         }
 
     // Calculate DFT.
@@ -4387,8 +4387,8 @@ void myPhaseSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double d
         {
             idx = i + j * pInfo->nWidth;
             // Apply (-1)^(x+y).
-            buffer[i].real = ((i + j) % 2 == 0) ? pSrc[idx].R : (-pSrc[idx].R);
-            buffer[i].imag = 0; // real number
+            buffer[idx].real = ((i + j) % 2 == 0) ? pSrc[idx].R : (-pSrc[idx].R);
+            buffer[idx].imag = 0; // real number
         }
 
     // Calculate DFT.
