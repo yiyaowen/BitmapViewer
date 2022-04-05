@@ -3,6 +3,7 @@
 #include <assert.h>
 // common dialog
 #include <commdlg.h>
+#include <float.h> // for double
 #include <math.h> // for pow
 #include <stdlib.h> // for rand
 #include <stdio.h> // for scanf
@@ -115,10 +116,15 @@ WCHAR gFileName[MAX_PATH], gTitleName[MAX_PATH];
 #define IDM_SPAF_LAPLACE 1024
 // 1st derivative
 #define IDM_SPAF_SOBEL 1025
-// SPEF: SPEctral Filter
 // custom core
 #define IDM_SPAF_CUST 1026
-#define IDM_SPEF_CUST 1027
+// SPEF: SPEctral Filter
+// power spectral (magnitude2)
+#define IDM_SPEF_POWER 1027
+// phase spectral (atan2(y,x))
+#define IDM_SPEF_PHASE 1028
+// custom core
+#define IDM_SPEF_CUST 1029
 //-------------------------------------
 #define IDM_HELP 3
 #define IDM_EASTER_EGG 1031
@@ -144,6 +150,22 @@ HMENU myLoadMainMenu();
 UINT myValidWndCount();
 
 RECT myGetSecondWndInitSize();
+
+// Process the image with logarithm transform: z = c * log(1 + r)
+// 
+// @param pData: the origin image to process.
+// @param pInfo: points to image pixel info.
+// @param c: see the formula listed above.
+//
+void myLogarithmTrans(MyBGRA* pData, MyBmpInfo* pInfo, double c);
+
+// Process the image with gamma transform: z = r^gamma
+// 
+// @param pData: the origin image to process.
+// @param pInfo: points to image pixel info.
+// @param gamma: see the formula listed above.
+//
+void myExpGammaTrans(MyBGRA* pData, MyBmpInfo* pInfo, double gamma);
 
 // Operation menus are those that can export or modify the image of main window.
 void myEnableOperationMenus(BOOL bIsGrayScale);
@@ -327,11 +349,197 @@ void myDomainLaplaceFilter(MY_FILTER_FUNC_PARAMS);
 // Sharpen the image with 1st derivative.
 void myDomainSobelFilter(MY_FILTER_FUNC_PARAMS);
 
+/*
+* We define a simple (no optimization) complex math package here to help with Fourier transform.
+*/
+
+typedef struct tagMyComplex { long double real, imag; } MyComplex;
+
+/*
+* Prefix "mycp" means "my + Complex".
+*/
+
+// Return square of magnitude (aka power) of the complex number.
+long double mycpMagnitude2(MyComplex* z)
+{ return z->real * z->real + z->imag * z->imag; }
+
+// Return magnitude (aka voltage) of the complex number.
+long double mycpMagnitude(MyComplex* z)
+{ return sqrt(z->real * z->real + z->imag * z->imag); }
+
+// Return phase of the complex number.
+long double mycpPhase(MyComplex* z)
+{ return atan2(z->imag, z->real); }
+
+// Invert [z].
+void mycpMinusInPlace(MyComplex* z)
+{ z->real = -z->real; z->imag = -z->imag; }
+
+// Return inverted [z].
+MyComplex mycpMinus(MyComplex* z)
+{ MyComplex g = { -z->real, -z->imag }; return g; }
+
+// Make conjugate of [z].
+void mycpConjInPlace(MyComplex* z)
+{ z->imag = -z->imag; }
+
+// Return conjugate of [z].
+MyComplex mycpConj(MyComplex* z)
+{ MyComplex g = { z->real, -z->imag }; return g; }
+
+// Populate [g] with [z1 + z2].
+void mycpAddInPlace(MyComplex* z1, MyComplex* z2, MyComplex* g)
+{ g->real = z1->real + z2->real; g->imag = z1->imag + z2->imag; }
+
+// Return [z1 + z2].
+MyComplex mycpAdd(MyComplex* z1, MyComplex* z2)
+{ MyComplex g = { z1->real + z2->real, z1->imag + z2->imag }; return g; }
+
+// Populate [g] with [z1 - z2].
+void mycpSubInPlace(MyComplex* z1, MyComplex* z2, MyComplex* g)
+{ g->real = z1->real - z2->real; g->imag = z1->imag - z2->imag; }
+
+// Return [z1 - z2].
+MyComplex mycpSub(MyComplex* z1, MyComplex* z2)
+{ MyComplex g = { z1->real - z2->real, z1->imag - z2->imag }; return g; }
+
+// Populate [g] with [z1 * z2].
+void mycpMulInPlace(MyComplex* z1, MyComplex* z2, MyComplex* g)
+{
+    g->real = z1->real * z2->real - z1->imag * z2->imag;
+    g->imag = z1->real * z2->imag + z1->imag * z2->real;
+}
+
+// Populate [g] with [c * z].
+void mycpMulScalarInPlace(long double c, MyComplex* z, MyComplex* g)
+{ g->real = c * z->real; g->imag = c * z->imag; }
+
+// Return [z1 * z2].
+MyComplex mycpMul(MyComplex* z1, MyComplex* z2)
+{
+    MyComplex g =
+    {
+        z1->real * z2->real - z1->imag * z2->imag,
+        z1->real * z2->imag + z1->imag * z2->real
+    };
+    return g;
+}
+
+// Return [c * z].
+MyComplex mycpMulScalar(long double c, MyComplex* z)
+{ MyComplex g = { c * z->real, c * z->imag }; return g; }
+
+// Populate [g] with [z1 / z2].
+void mycpDivInPlace(MyComplex* z1, MyComplex* z2, MyComplex* g)
+{
+    long double z2mag = z2->real * z2->real + z2->imag * z2->imag;
+    g->real = (z1->real * z2->real + z1->imag * z2->imag) / z2mag;
+    g->imag = (z1->imag * z2->real - z1->real * z2->imag) / z2mag;
+}
+
+// Return [z1 / z2].
+MyComplex mycpDiv(MyComplex* z1, MyComplex* z2)
+{
+    long double z2mag = z2->real * z2->real + z2->imag * z2->imag;
+    MyComplex g =
+    {
+        (z1->real * z2->real + z1->imag * z2->imag) / z2mag,
+        (z1->imag * z2->real - z1->real * z2->imag) / z2mag
+    };
+    return g;
+}
+
+/*
+* We don't provide methods to divide a complex with a scalar,
+* since it can be done easily by calling mycpMulScalar(1 / c, z).
+*/
+
+// Populate [z] with [e^(j * power)].
+void mycpEjInPlace(long double power, MyComplex* z)
+{ z->real = cos(power); z->imag = sin(power); }
+
+// Return [e^(j * power)].
+MyComplex mycpEj(long double power)
+{ MyComplex z = { cos(power), sin(power) }; return z; }
+
+// 1-Dimension DFT/IDFT (in place).
+//
+// @param pDst: transformed results.
+// @param Psrc: origin complex data.
+// @param L: convolution array length.
+// @param incre: 1 or L, for 2-D data.
+//
+void mycpDFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre);
+void mycpIDFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre);
+
+// 1-Dimension FFT/IFFT (in place).
+//
+// @param pDst: transformed results.
+// @param Psrc: origin complex data.
+// @param L: convolution array length.
+// @param incre: 1 or L, for 2-D data.
+//
+void mycpFFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre);
+void mycpIFFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre);
+
+// 2-Dimension DFT/IDFT (heap alloc).
+//
+// @param pData: origin complex data.
+// @param M: convolution core width.
+// @param N: convolution core height.
+//
+// @return related freq-domain result [M x N].
+//
+MyComplex* mycpDFT2(MyComplex* pData, UINT M, UINT N);
+MyComplex* mycpIDFT2(MyComplex* pData, UINT M, UINT N);
+
+// 2-Dimension FFT/IFFT (heap alloc). [Optimizaed from DFT].
+//
+// @param pData: origin complex data.
+// @param M: convolution core width.
+// @param N: convolution core height.
+//
+// @return related freq-domain result [M x N].
+//
+MyComplex* mycpFFT2(MyComplex* pData, UINT M, UINT N);
+MyComplex* mycpIFFT2(MyComplex* pData, UINT M, UINT N);
+
+// @see myLogarithmTrans for more detials.
+// This func will populate pDst with normalized logarithm of real parts in pSrc.
+void mycpLogarithmTrans(MyBGRA* pDst, MyComplex* pSrc, UINT M, UINT N, long double c);
+
+// Populate destination image with the frequency power-spectral of source image.
+// To make the freq-spectral shown at the center, (-1)^(x+y) is applied before transform.
+// To make the freq-spectral brighter, a logarithm transform is applied after transform.
+//
+// @param pDst: the destination image.
+// @param pSrc: the source image.
+// @param pInfo: points to image pixel info.
+// @param dLogParam: [c] in [c * log(1 + r)].
+//
+void myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam);
+
+// Populate destination image with the frequency phase-spectral of source image.
+// To make the freq-spectral shown at the center, (-1)^(x+y) is applied before transform.
+// To make the freq-spectral brighter, a logarithm transform is applied after transform.
+//
+// @param pDst: the destination image.
+// @param pSrc: the source image.
+// @param pInfo: points to image pixel info.
+// @param dLogParam: [c] in [c * log(1 + r)].
+//
+void myPhaseSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam);
+
 //-------------------------------------------------------------------------------------------------
 // Main Function
 //-------------------------------------------------------------------------------------------------
 
+#if defined(__GNUC__)
+// There's no "wWinMain" for MinGW, so we simply use "WinMain" instead here.
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine, int nShowCmd)
+#elif defined(_MSC_VER)
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLine, int nShowCmd)
+#endif
 {
     MSG msg;
     WNDCLASS wndclass;
@@ -627,11 +835,15 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                 (LPVOID)LOWORD(wParam));
             return 0;
         }
+        // space-domain
         case IDM_SPAF_BOX:
         case IDM_SPAF_GAUS:
         case IDM_SPAF_MEDI:
         case IDM_SPAF_LAPLACE:
         case IDM_SPAF_SOBEL:
+        // freq-domain
+        case IDM_SPEF_POWER:
+        case IDM_SPEF_PHASE:
         {
             RECT rc = myGetSpafGeneWndInitSize();
             // Create window with quried size.
@@ -650,20 +862,12 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                 (LPVOID)LOWORD(wParam));
             return 0;
         }
+        // space-domain
         case IDM_SPAF_CUST:
+        // freq-domain
+        case IDM_SPEF_CUST:
         {
-            gDomainCustCoreWnd = CreateWindow(
-                gDomainCustCoreWndName,
-                NULL,
-                WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                gMainWnd,
-                NULL,
-                gInstance,
-                NULL);
+            MessageBox(hwnd, L"抱歉, 我们暂时不支持自定义卷积核!", L"提示", MB_OK | MB_ICONINFORMATION);
             return 0;
         }
         case IDM_EASTER_EGG:
@@ -815,6 +1019,14 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
 // main ÷ sub / sub ÷ main
 #define SUBW_MAIN_DIV_SUB_BTN 10009
 #define SUBW_SUB_DIV_MAIN_BTN 10010
+// logarithm transform
+#define SUBW_LOG_TRANS_PARAM_LBL 10011
+#define SUBW_LOG_TRANS_PARAM_EDT 10012
+#define SUBW_LOG_TRANS_EXECU_BTN 10013
+// exponential transform
+#define SUBW_EXP_TRANS_GAMMA_LBL 10014
+#define SUBW_EXP_TRANS_GAMMA_EDT 10015
+#define SUBW_EXP_TRANS_EXECU_BTN 10016
 
 LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -845,6 +1057,19 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
     static HWND btnMainDivSub;
     static HWND btnSubDivMain;
 
+    // log, exp widgets.
+    static HWND lblLogParam;
+    static HWND edtLogParam;
+    static double dLogParam = 1;
+    static HWND btnLogExecu;
+
+    static HWND lblExpGamma;
+    static HWND edtExpGamma;
+    static double dExpGamma = 2;
+    static HWND btnExpExecu;
+
+    static LONG yMostBottom;
+    
     switch (message)
     {
     case WM_CREATE:
@@ -926,8 +1151,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             Btn_Text, \
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, \
             bmpInfo.nWidth + 24, \
-            Btn_Idx * (tmpBtnH + 5), \
-            12 * gCharWidth, \
+            5 + Btn_Idx * (tmpBtnH + 10), \
+            16 * gCharWidth, \
             tmpBtnH, \
             hwnd, \
             (HMENU)Btn_ID, \
@@ -947,6 +1172,94 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         MY_CREATE_SUBW_BTN(btnSubDivMain, L"副 ÷ 主", 6, SUBW_SUB_DIV_MAIN_BTN);
 
 #undef MY_CREATE_SUBW_BTN
+
+        // Create logarithm transform text label, edit line & button.
+        lblLogParam = CreateWindow(
+            L"static",
+            L"clog(1+r), c",
+            WS_CHILD | WS_VISIBLE | SS_CENTER,
+            bmpInfo.nWidth + 24,
+            10 + 7 * (tmpBtnH + 10),
+            10 * gCharWidth,
+            gCharHeight,
+            hwnd,
+            (HMENU)SUBW_LOG_TRANS_PARAM_LBL,
+            gInstance,
+            NULL);
+        edtLogParam = CreateWindow(
+            L"edit",
+            L"1",
+            WS_CHILD | WS_VISIBLE,
+            bmpInfo.nWidth + 24 + 12 * gCharWidth,
+            10 + 7 * (tmpBtnH + 10),
+            4 * gCharWidth,
+            gCharHeight,
+            hwnd,
+            (HMENU)SUBW_LOG_TRANS_PARAM_EDT,
+            gInstance,
+            NULL);
+        btnLogExecu = CreateWindow(
+            L"button",
+            L"对数变换",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            bmpInfo.nWidth + 24,
+            10 + 7 * (tmpBtnH + 10) + gCharHeight + 10,
+            16 * gCharWidth,
+            tmpBtnH,
+            hwnd,
+            (HMENU)SUBW_LOG_TRANS_EXECU_BTN,
+            gInstance,
+            NULL);
+
+        // Create exponential transform text label, edit line & button.
+        lblExpGamma = CreateWindow(
+            L"static",
+            L"gamma",
+            WS_CHILD | WS_VISIBLE | SS_CENTER,
+            bmpInfo.nWidth + 24,
+            10 + 7 * (tmpBtnH + 10) + 3 * gCharHeight + 20,
+            10 * gCharWidth,
+            gCharHeight,
+            hwnd,
+            (HMENU)SUBW_EXP_TRANS_GAMMA_LBL,
+            gInstance,
+            NULL);
+        edtExpGamma = CreateWindow(
+            L"edit",
+            L"2",
+            WS_CHILD | WS_VISIBLE,
+            bmpInfo.nWidth + 24 + 12 * gCharWidth,
+            10 + 7 * (tmpBtnH + 10) + 3 * gCharHeight + 20,
+            4 * gCharWidth,
+            gCharHeight,
+            hwnd,
+            (HMENU)SUBW_EXP_TRANS_GAMMA_EDT,
+            gInstance,
+            NULL);
+        btnExpExecu = CreateWindow(
+            L"button",
+            L"伽马变换",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            bmpInfo.nWidth + 24,
+            10 + 7 * (tmpBtnH + 10) + 4 * gCharHeight + 30,
+            16 * gCharWidth,
+            tmpBtnH,
+            hwnd,
+            (HMENU)SUBW_EXP_TRANS_EXECU_BTN,
+            gInstance,
+            NULL);
+
+        yMostBottom = 10 + 7 * (tmpBtnH + 10) + 4 * gCharHeight + 30 + tmpBtnH + 5;
+        // Suit window to display all widgets.
+        RECT tmpRC = { 0, 0,
+            ((gImage == NULL) ? 256 : gBmpInfo.nWidth) + 36 + 16 * gCharWidth,
+            ((gImage == NULL) ? 256 : gBmpInfo.nHeight) + 2 * gCharHeight + 12 };
+        // Compare origin height with suited height.
+        tmpRC.bottom = max(yMostBottom, tmpRC.bottom);
+        AdjustWindowRect(&tmpRC, WS_OVERLAPPEDWINDOW, FALSE);
+        UINT suitWidth = tmpRC.right - tmpRC.left, suitHeight = tmpRC.bottom - tmpRC.top;
+        GetWindowRect(hwnd, &tmpRC);
+        MoveWindow(hwnd, tmpRC.left, tmpRC.top, suitWidth, suitHeight, TRUE);
         return 0;
 
     case WM_MOVE:
@@ -977,8 +1290,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         // Keep those buttons attached to window right.
 #define MY_STICK_BUTTON_RIGHT(Btn_Handle, Btn_Idx) \
         GetWindowRect(Btn_Handle, &rc); \
-        MoveWindow(Btn_Handle, clntWidth - 12 - 12 * gCharWidth, \
-                   Btn_Idx * (5 + 2 * gCharHeight), \
+        MoveWindow(Btn_Handle, clntWidth - 12 - 16 * gCharWidth, \
+                   5 + Btn_Idx * (10 + 2 * gCharHeight), \
                    rc.right - rc.left, rc.bottom - rc.top, TRUE)
 
         MY_STICK_BUTTON_RIGHT(btnInvertPixel, 0);
@@ -994,6 +1307,33 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         MY_STICK_BUTTON_RIGHT(btnSubDivMain, 6);
 
 #undef MY_STICK_BUTTON_RIGHT
+
+        // Keep log, exp widgets stick attached to window right.
+        GetWindowRect(lblLogParam, &rc);
+        MoveWindow(lblLogParam, clntWidth - 12 - 16 * gCharWidth,
+                   10 + 7 * (10 + 2 * gCharHeight),
+                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
+        GetWindowRect(edtLogParam, &rc);
+        MoveWindow(edtLogParam, clntWidth - 12 - 4 * gCharWidth,
+                   10 + 7 * (10 + 2 * gCharHeight),
+                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
+        GetWindowRect(btnLogExecu, &rc);
+        MoveWindow(btnLogExecu, clntWidth - 12 - 16 * gCharWidth,
+                   10 + 7 * (10 + 2 * gCharHeight) + gCharHeight + 10,
+                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
+
+        GetWindowRect(lblExpGamma, &rc);
+        MoveWindow(lblExpGamma, clntWidth - 12 - 16 * gCharWidth,
+                   10 + 7 * (10 + 2 * gCharHeight) + 3 * gCharHeight + 20,
+                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
+        GetWindowRect(edtExpGamma, &rc);
+        MoveWindow(edtExpGamma, clntWidth - 12 - 4 * gCharWidth,
+                   10 + 7 * (10 + 2 * gCharHeight) + 3 * gCharHeight + 20,
+                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
+        GetWindowRect(btnExpExecu, &rc);
+        MoveWindow(btnExpExecu, clntWidth - 12 - 16 * gCharWidth,
+                   10 + 7 * (10 + 2 * gCharHeight) + 4 * gCharHeight + 30,
+                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
 
         width = LOWORD(lParam);
         height = HIWORD(lParam);
@@ -1034,11 +1374,15 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             memcpy(image, gImage, nPixelByteSize);
 
             // Resize to suit copyed image.
-            RECT rc = myGetSecondWndInitSize();
-            int tmpW = rc.right - rc.left;
-            int tmpH = rc.bottom - rc.top;
-            GetWindowRect(hwnd, &rc);
-            MoveWindow(hwnd, rc.left, rc.top, tmpW, tmpH, TRUE);
+            RECT tmpRC = { 0, 0,
+                bmpInfo.nWidth + 36 + 16 * gCharWidth,
+                bmpInfo.nHeight + 2 * gCharHeight + 12 };
+            // Compare origin height with suited height.
+            tmpRC.bottom = max(yMostBottom, tmpRC.bottom);
+            AdjustWindowRect(&tmpRC, WS_OVERLAPPEDWINDOW, FALSE);
+            UINT suitWidth = tmpRC.right - tmpRC.left, suitHeight = tmpRC.bottom - tmpRC.top;
+            GetWindowRect(hwnd, &tmpRC);
+            MoveWindow(hwnd, tmpRC.left, tmpRC.top, suitWidth, suitHeight, TRUE);
             InvalidateRect(hwnd, NULL, TRUE);
             return 0;
         }
@@ -1105,14 +1449,15 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 bmpInfo = tmpInfo;
 
                 // Resize to suit selected image.
-                RECT rc = { 0, 0,
-                    bmpInfo.nWidth + 36 + 12 * gCharWidth,
+                RECT tmpRC = { 0, 0,
+                    bmpInfo.nWidth + 36 + 16 * gCharWidth,
                     bmpInfo.nHeight + 2 * gCharHeight + 12 };
-                AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-                int tmpW = rc.right - rc.left;
-                int tmpH = rc.bottom - rc.top;
-                GetWindowRect(hwnd, &rc);
-                MoveWindow(hwnd, rc.left, rc.top, tmpW, tmpH, TRUE);
+                // Compare origin height with suited height.
+                tmpRC.bottom = max(yMostBottom, tmpRC.bottom);
+                AdjustWindowRect(&tmpRC, WS_OVERLAPPEDWINDOW, FALSE);
+                UINT suitWidth = tmpRC.right - tmpRC.left, suitHeight = tmpRC.bottom - tmpRC.top;
+                GetWindowRect(hwnd, &tmpRC);
+                MoveWindow(hwnd, tmpRC.left, tmpRC.top, suitWidth, suitHeight, TRUE);
                 InvalidateRect(hwnd, NULL, TRUE);
             }
             return 0;
@@ -1274,6 +1619,40 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
 #undef MY_NORMALIZE_SUB_IMG
 #undef MY_CHECK_MAIN_SUB_IMG
 
+        case SUBW_LOG_TRANS_PARAM_EDT:
+        {
+            WCHAR szLogParam[10];
+            GetWindowText(edtLogParam, szLogParam, 10);
+            float iUserInput = 1;
+            if (swscanf(szLogParam, L"%f", &iUserInput) == 1)
+                dLogParam = (double)iUserInput;
+            // Make sure c in clog(1+r) is not negative.
+            dLogParam = max(0, dLogParam);
+            return 0;
+        }
+        case SUBW_LOG_TRANS_EXECU_BTN:
+        {
+            myLogarithmTrans(image, &bmpInfo, dLogParam);
+            InvalidateRect(hwnd, NULL, TRUE);
+            return 0;
+        }
+        case SUBW_EXP_TRANS_GAMMA_EDT:
+        {
+            WCHAR szGamma[10];
+            GetWindowText(edtExpGamma, szGamma, 10);
+            float iUserInput = 1;
+            if (swscanf(szGamma, L"%f", &iUserInput) == 1)
+                dExpGamma = (double)iUserInput;
+            // Make sure gamma exponential is not negative.
+            dExpGamma = max(0, dExpGamma);
+            return 0;
+        }
+        case SUBW_EXP_TRANS_EXECU_BTN:
+        {
+            myExpGammaTrans(image, &bmpInfo, dExpGamma);
+            InvalidateRect(hwnd, NULL, TRUE);
+            return 0;
+        }
         default:
             return 0;
         }
@@ -2230,11 +2609,18 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
     // How many key-value pairs need for each filter type?
     static int nParamCount[] =
     {
+        // space-domain
+
         1, // Box Filter
         2, // Gaussian Filter
         1, // Median Filter
         0, // Laplace Filter
         0, // Sobel Filter
+
+        // freq-domain
+
+        1, // Power Spectral
+        1, // Phase Spectral
     };
 
     switch (message)
@@ -2334,6 +2720,14 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
             iParamVal[0] = 1;
             return 0;
         }
+        case IDM_SPEF_POWER: // Power Spectral
+        case IDM_SPEF_PHASE: // Phase Spectral
+        {
+            SetWindowText(lblParam[0], L"clog(1+r), c");
+            SetWindowText(edtParam[0], L"1");
+            dParamVal[0] = 1;
+            return 0;
+        }
         default:
             break;
         }
@@ -2403,6 +2797,12 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
                 break;
             case IDM_SPAF_SOBEL: // 1st derivative, Sobel operator.
                 myDomainSobelFilter(image, gImage, &gBmpInfo, nBorderMode);
+                break;
+            case IDM_SPEF_POWER: // Fourier transform, power spectral.
+                myPowerSpectral(image, gImage, &gBmpInfo, dParamVal[0]);
+                break;
+            case IDM_SPEF_PHASE: // Fourier transform, phase spectral.
+                myPhaseSpectral(image, gImage, &gBmpInfo, dParamVal[0]);
                 break;
             default:
                 break;
@@ -2499,6 +2899,16 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
                 {
                     // Make sure half length is not less than 1.
                     iParamVal[0] = max(1, iParamVal[0]);
+                }
+                return 0;
+            }
+            case IDM_SPEF_POWER:
+            case IDM_SPEF_PHASE:
+            {
+                if (idxParam == 0) // clog(1 + r), c
+                {
+                    // Make sure dLogParam is not negative.
+                    dParamVal[0] = max(0, dParamVal[0]);
                 }
                 return 0;
             }
@@ -2722,7 +3132,12 @@ HMENU myLoadMainMenu()
         OPT_MIDDLE, IDM_SPAF_LAPLACE,   L'空', L'域', L'_', L'拉', L'普', L'拉', L'斯', 0,
         OPT_MIDDLE, IDM_SPAF_SOBEL,     L'空', L'域', L'_', L'索', L'贝', L'尔', 0,
         OPT_______,
-        OPT_MIDEND, IDM_SPAF_CUST,      L'空', L'域', L'-', L'自', L'定', L'义', L'核', 0,
+        OPT_MIDDLE, IDM_SPAF_CUST,      L'空', L'域', L'-', L'自', L'定', L'义', L'核', 0,
+        OPT_______,
+        OPT_MIDDLE, IDM_SPEF_POWER,       L'频', L'域', L'_', L'功', L'率', L'谱', 0,
+        OPT_MIDDLE, IDM_SPEF_PHASE,       L'频', L'域', L'_', L'相', L'位', L'谱', 0,
+        OPT_______,
+        OPT_MIDEND, IDM_SPAF_CUST,      L'频', L'域', L'-', L'自', L'定', L'义', L'核', 0,
 
 #define MY_EASTER_EGG_TEXT \
 L'~', L'%', L'?', L'…', L',', L'#', L' ', L'*', L'\'', L'☆', L'&', L'℃', L'$', L'︿', L'★', L'?'
@@ -2761,10 +3176,76 @@ UINT myValidWndCount()
 RECT myGetSecondWndInitSize()
 {
     RECT rc = { 0, 0,
-        ((gImage == NULL) ? 256 : gBmpInfo.nWidth) + 36 + 12 * gCharWidth,
+        ((gImage == NULL) ? 256 : gBmpInfo.nWidth) + 36 + 16 * gCharWidth,
         ((gImage == NULL) ? 256 : gBmpInfo.nHeight) + 2 * gCharHeight + 12 };
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
     return rc;
+}
+
+void myLogarithmTrans(MyBGRA* pData, MyBmpInfo* pInfo, double c)
+{
+    UINT i, j, idx; // Declare common index variables here.
+
+    // Allocate an intermidiate buffer to normalize later.
+    double* buffer = (double*)malloc(pInfo->nWidth * pInfo->nHeight * sizeof(double));
+    myAssert(buffer);
+
+    double tmpMin = 255, tmpMax = 0;
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            buffer[idx] = c * log(1 + (double)pData[idx].R);
+            // Update min, max values.
+            tmpMin = min(tmpMin, buffer[idx]);
+            tmpMax = max(tmpMax, buffer[idx]);
+        }
+
+    tmpMax -= tmpMin;
+    // Normalize to 0 ~ 255.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            buffer[idx] = 255 * ((buffer[idx] - tmpMin) / tmpMax);
+            pData[idx].R = pData[idx].G = pData[idx].B = (UINT8)min(255, max(0, buffer[idx]));
+        }
+
+    // Note we have allocated memory for buffer data.
+    free(buffer);
+}
+
+void myExpGammaTrans(MyBGRA* pData, MyBmpInfo* pInfo, double gamma)
+{
+    UINT i, j, idx; // Declare common index variables here.
+
+// Allocate an intermidiate buffer to normalize later.
+    double* buffer = (double*)malloc(pInfo->nWidth * pInfo->nHeight * sizeof(double));
+    myAssert(buffer);
+
+    double tmpMin = 255, tmpMax = 0;
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            buffer[idx] = pow(pData[idx].R, gamma);
+            // Update min, max values.
+            tmpMin = min(tmpMin, buffer[idx]);
+            tmpMax = max(tmpMax, buffer[idx]);
+        }
+
+    tmpMax -= tmpMin;
+    // Normalize to 0 ~ 255.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            buffer[idx] = 255 * ((buffer[idx] - tmpMin) / tmpMax);
+            pData[idx].R = pData[idx].G = pData[idx].B = (UINT8)min(255, max(0, buffer[idx]));
+        }
+
+    // Note we have allocated memory for buffer data.
+    free(buffer);
 }
 
 void myEnableOperationMenus(BOOL bIsGrayScale)
@@ -3703,6 +4184,230 @@ void myDomainSobelFilter(MY_FILTER_FUNC_PARAMS)
 
     // Note we have allocated memory for temporary image data.
     free(tmpImage);
+}
+
+void mycpDFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre)
+{
+    // Prepare helper variables.
+    long double _2pi = -6.283185;
+
+    for (UINT f = 0; f < L; ++f)
+    {
+        UINT dstIdx = f * incre;
+        // Populate zero since we will do increment later.
+        pDst[dstIdx].real = pDst[dstIdx].imag = 0;
+        for (UINT t = 0; t < L; ++t)
+        {
+            UINT srcIdx = t * incre;
+            // e^-j * 2pi * (ft / L)
+            MyComplex item = mycpEj(_2pi * ((double)(f * t) / L));
+            // f(t) * item
+            mycpMulInPlace(pSrc + srcIdx, &item, &item);
+            // sum of items
+            mycpAddInPlace(pDst + dstIdx, &item, pDst + dstIdx);
+        }
+    }
+}
+
+void mycpIDFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre)
+{
+    // Prepare helper variables.
+    long double twopi = 6.283185;
+
+    for (UINT t = 0; t < L; ++t)
+    {
+        UINT dstIdx = t * incre;
+        // Populate zero since we will do increment later.
+        pDst[dstIdx].real = pDst[dstIdx].imag = 0;
+        for (UINT f = 0; f < L; ++f)
+        {
+            UINT srcIdx = f * incre;
+            // e^j * 2pi * (ft / L)
+            MyComplex item = mycpEj(twopi * ((long double)(f * t) / L));
+            // F(f) * item
+            mycpMulInPlace(pSrc + srcIdx, &item, &item);
+            // sum of items
+            mycpAddInPlace(pDst + dstIdx, &item, pDst + dstIdx);
+        }
+    }
+}
+
+void mycpFFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre)
+{
+    // TODO: implement 1-Dimension FFT.
+}
+
+void mycpIFFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre)
+{
+    // TODO: implement 1-Dimension IFFT.
+}
+
+MyComplex* mycpDFT2(MyComplex* pData, UINT M, UINT N)
+{
+    size_t nByteSize = M * N * sizeof(MyComplex);
+    // Allocate transformed results buffer.
+    MyComplex* buffer = (MyComplex*)malloc(nByteSize);
+    myAssert(buffer);
+    // Allocate temporary intermidiate buffer to calculate separately.
+    MyComplex* intermidiate = (MyComplex*)malloc(nByteSize);
+    myAssert(intermidiate);
+
+    //--------------------------------------------------------------- Horizontal
+    for (UINT u = 0; u < M; ++u)
+    {
+        UINT incre = u;
+        mycpDFT(intermidiate + incre, pData + incre, N, M);
+    }
+    //--------------------------------------------------------------- Vertical
+    for (UINT v = 0; v < N; ++v)
+    {
+        UINT incre = v * M;
+        mycpDFT(buffer + incre, intermidiate + incre, M, 1);
+    }
+
+    // Note we have allocated memory for intermidiate buffer data.
+    free(intermidiate);
+
+    return buffer;
+}
+
+MyComplex* mycpIDFT2(MyComplex* pData, UINT M, UINT N)
+{
+    size_t nByteSize = M * N * sizeof(MyComplex);
+    // Allocate transformed results buffer.
+    MyComplex* buffer = (MyComplex*)malloc(nByteSize);
+    myAssert(buffer);
+    // Allocate temporary intermidiate buffer to calculate separately.
+    MyComplex* intermidiate = (MyComplex*)malloc(nByteSize);
+    myAssert(intermidiate);
+
+    //--------------------------------------------------------------- Horizontal
+    for (UINT u = 0; u < M; ++u)
+    {
+        UINT incre = u;
+        mycpIDFT(intermidiate + incre, pData + incre, N, M);
+    }
+    //--------------------------------------------------------------- Vertical
+    for (UINT v = 0; v < N; ++v)
+    {
+        UINT incre = v * M;
+        mycpIDFT(buffer + incre, intermidiate + incre, M, 1);
+    }
+
+    // Note we have allocated memory for intermidiate buffer data.
+    free(intermidiate);
+
+    return buffer;
+}
+
+MyComplex* mycpFFT2(MyComplex* pData, UINT M, UINT N)
+{
+    // TODO: implement 2-Dimension FFT.
+    return NULL;
+}
+
+MyComplex* mycpIFFT2(MyComplex* pData, UINT M, UINT N)
+{
+    // TODO: implement 2-Dimension IFFT.
+    return NULL;
+}
+
+void mycpLogarithmTrans(MyBGRA* pDst, MyComplex* pSrc, UINT M, UINT N, long double c)
+{
+    UINT i, j, idx; // Declare common index variables here.
+
+    long double tmpMin = LDBL_MAX, tmpMax = LDBL_MIN;
+    for (i = 0; i < M; ++i)
+        for (j = 0; j < N; ++j)
+        {
+            idx = i + j * M;
+            pSrc[idx].real = c * log(1 + pSrc[idx].real);
+            // Update min, max values.
+            tmpMin = min(tmpMin, pSrc[idx].real);
+            tmpMax = max(tmpMax, pSrc[idx].real);
+        }
+
+    tmpMax -= tmpMin;
+    // Normalize to 0 ~ 255.
+    for (i = 0; i < M; ++i)
+        for (j = 0; j < N; ++j)
+        {
+            idx = i + j * M;
+            pSrc[idx].real = 255 * ((pSrc[idx].real - tmpMin) / tmpMax);
+            pDst[idx].R = pDst[idx].G = pDst[idx].B = (UINT8)min(255, max(0, pSrc[idx].real));
+        }
+}
+
+void myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam)
+{
+    UINT i, j, idx; // Declare common index variables here.
+
+    // Allocate memory for intermidiate complex buffer.
+    MyComplex* buffer = (MyComplex*)malloc(pInfo->nWidth * pInfo->nHeight * sizeof(MyComplex));
+    myAssert(buffer);
+    // Initialize complex buffer.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            // Apply (-1)^(x+y).
+            buffer[i].real = ((i + j) % 2 == 0) ? pSrc[idx].R : (-pSrc[idx].R);
+            buffer[i].imag = 0; // real number
+        }
+
+    // Calculate DFT.
+    MyComplex* result = mycpDFT2(buffer, pInfo->nWidth, pInfo->nHeight);
+    // Convert to power-spectral.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            // Store power in real part to match the logarithm later.
+            result[idx].real = mycpMagnitude2(result + idx);
+        }
+
+    // Convert complex to RGB.
+    mycpLogarithmTrans(pDst, result, pInfo->nWidth, pInfo->nHeight, dLogParam);
+    
+    free(result);
+    // Note we have allocated memory for complex buffer data.
+    free(buffer);
+}
+
+void myPhaseSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam)
+{
+    UINT i, j, idx; // Declare common index variables here.
+
+    // Allocate memory for intermidiate complex buffer.
+    MyComplex* buffer = (MyComplex*)malloc(pInfo->nWidth * pInfo->nHeight * sizeof(MyComplex));
+    myAssert(buffer);
+    // Initialize complex buffer.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            // Apply (-1)^(x+y).
+            buffer[i].real = ((i + j) % 2 == 0) ? pSrc[idx].R : (-pSrc[idx].R);
+            buffer[i].imag = 0; // real number
+        }
+
+    // Calculate DFT.
+    MyComplex* result = mycpDFT2(buffer, pInfo->nWidth, pInfo->nHeight);
+    // Convert to phase-spectral.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            // Store phase in real part to match the logarithm later.
+            result[idx].real = mycpPhase(result + idx);
+        }
+
+    // Convert complex to RGB.
+    mycpLogarithmTrans(pDst, result, pInfo->nWidth, pInfo->nHeight, dLogParam);
+
+    free(result);
+    // Note we have allocated memory for complex buffer data.
+    free(buffer);
 }
 
 //#################################################################################################

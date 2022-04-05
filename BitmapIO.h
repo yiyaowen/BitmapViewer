@@ -1,6 +1,11 @@
 ﻿#pragma once
 
-#include <Windows.h>
+// In case that MinGW doesn't define this for us.
+#ifndef UNICODE
+#define UNICODE
+#endif
+// The same for MSVC and MinGW.
+#include <windows.h>
 
 typedef struct tagMyBGRA
 {
