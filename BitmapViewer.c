@@ -8,7 +8,11 @@
 #include <stdlib.h> // for rand
 #include <stdio.h> // for scanf
 #include <time.h> // for time
+// for GET_X_LPARAM, GET_Y_LPARAM
+#include <windowsx.h>
 
+// Disable sign match warnings.
+#pragma warning(disable : 4018)
 // Disable type casting warnings.
 #pragma warning(disable : 4311)
 #pragma warning(disable : 4312)
@@ -51,12 +55,16 @@ HWND gMainWnd,
      gGtwHistDispWnd,
      gDomainFilterWnd,
      gDomainCustCoreWnd;
+// Remember to modify [valid window count] after add a new window.
 
 HWND gAppAboutWnd;
 
 // Image data of main window
 MyBGRA* gImage = NULL;
 MyBmpInfo gBmpInfo;
+// We have to forward declare here since MyComplex type hasn't been defined yet.
+typedef struct tagMyComplex MyComplex;
+MyComplex* gSpectral = NULL;
 
 // System metrics info
 UINT gCxIcon = 0, gCyIcon = 0;
@@ -64,6 +72,7 @@ UINT gCaptionHeight = 0;
 UINT gCharWidth = 0, gCharHeight = 0;
 UINT gCxVertScr = 0, gCyVertScr = 0;
 UINT gCxHorzScr = 0, gCyHorzScr = 0;
+UINT gMaxClntWidth = 0, gMaxClntHeight = 0;
 
 // App Icon
 HICON gIcon;
@@ -71,6 +80,8 @@ MyBGRA* gAppIconData;
 
 // Main window menu
 HMENU gMenu;
+// Main accelerator table
+HACCEL gAccel;
 
 // Whether the image of main window is connected to an external file.
 BOOL gHasExternalFile = FALSE;
@@ -88,12 +99,14 @@ WCHAR gFileName[MAX_PATH], gTitleName[MAX_PATH];
 // Main Menu ID
 //-------------------------------------
 #define IDM_FILE 0
-#define IDM_FILE_NEW 1001
-#define IDM_FILE_OPEN 1002
-#define IDM_FILE_SECOND 1003
-#define IDM_FILE_SAVE 1004
-#define IDM_FILE_SAVE_AS 1005
-#define IDM_FILE_EXP_TXT 1006
+#define IDM_FILE_NEW_256x256 1001
+#define IDM_FILE_NEW_512x512 1002
+#define IDM_FILE_NEW_1024x1024 1003
+#define IDM_FILE_OPEN 1004
+#define IDM_FILE_SECOND 1005
+#define IDM_FILE_SAVE 1006
+#define IDM_FILE_SAVE_AS 1007
+#define IDM_FILE_EXP_TXT 1008
 //-------------------------------------
 #define IDM_GRAY 1
 // empirical formula
@@ -104,6 +117,10 @@ WCHAR gFileName[MAX_PATH], gTitleName[MAX_PATH];
 #define IDM_GRAY_R 1014
 #define IDM_GRAY_G 1015
 #define IDM_GRAY_B 1016
+// boundary expansion
+#define IDM_GRAY_2xBLACK 1017
+#define IDM_GRAY_2xMIRROR 1018
+#define IDM_GRAY_2xCOPY 1019
 //-------------------------------------
 #define IDM_DOMAIN 2
 // SPAF: SPAtial Filter
@@ -117,18 +134,38 @@ WCHAR gFileName[MAX_PATH], gTitleName[MAX_PATH];
 // 1st derivative
 #define IDM_SPAF_SOBEL 1025
 // custom core
-#define IDM_SPAF_CUST 1026
+#define IDM_SPAF_CUST 10260 // DISABLE
 // SPEF: SPEctral Filter
 // power spectral (magnitude2)
 #define IDM_SPEF_POWER 1027
 // phase spectral (atan2(y,x))
 #define IDM_SPEF_PHASE 1028
+// FFT accelerated types
+#define IDM_SPEF_POWER_FFT 1029
+#define IDM_SPEF_PHASE_FFT 1030
 // custom core
-#define IDM_SPEF_CUST 1029
+#define IDM_SPEF_CUST 10310 // DISABLE
+#define MY_DOMAIN_IDM_COUNT 11
 //-------------------------------------
-#define IDM_HELP 3
-#define IDM_EASTER_EGG 1031
-#define IDM_APP_ABOUT 1032
+#define IDM_TRANSFER_FUNC 3
+// ILPF: Idea Low Pass Filter
+#define IDM_TFUNC_ILPF 1031
+// GLPF: Gaussian Low Pass Filter
+#define IDM_TFUNC_GLPF 1032
+// BLPF: Butterworth Low Pass Filter
+#define IDM_TFUNC_BLPF 1033
+// HPF: Ideal, Gaussian, Butterworth
+#define IDM_TFUNC_IHPF 1034
+#define IDM_TFUNC_GHPF 1035
+#define IDM_TFUNC_BHPF 1036
+// Homomorphic Filter
+#define IDM_TFUNC_HOMO 1037
+//-------------------------------------
+#define IDM_HELP 4
+#define IDM_EASTER_EGG 1041
+#define IDM_APP_ABOUT 1042
+#define IDM_WEB_HOME 1043
+// Remember to modify [en/disable operation menu] after add a new menu.
 
 //-------------------------------------------------------------------------------------------------
 // Helper Function Declaration
@@ -147,6 +184,8 @@ LRESULT CALLBACK AppAboutWndProc(HWND, UINT, WPARAM, LPARAM);
 HICON myLoadAppIcon();
 
 HMENU myLoadMainMenu();
+HACCEL myLoadMainAccel();
+
 UINT myValidWndCount();
 
 RECT myGetSecondWndInitSize();
@@ -168,7 +207,7 @@ void myLogarithmTrans(MyBGRA* pData, MyBmpInfo* pInfo, double c);
 void myExpGammaTrans(MyBGRA* pData, MyBmpInfo* pInfo, double gamma);
 
 // Operation menus are those that can export or modify the image of main window.
-void myEnableOperationMenus(BOOL bIsGrayScale);
+void myEnableOperationMenus();
 void myDisableOperationMenus();
 
 OPENFILENAME gOpenFileName;
@@ -184,10 +223,15 @@ BOOL myIsImageGrayScale(MyBGRA * pData, MyBmpInfo * pInfo);
 // @param hdc: handle to device context.
 // @param offsetX: x destination coordinate.
 // @param offsetY: y destination coordinate.
+// @param cxValid: destination mask width.
+// @param cyValid: destination mask height.
+// @param imgX: x source coordinate.
+// @param imgY: y source coordinate.
 // @param pData: points to image pixel data.
 // @param pInfo: points to image pixel info.
 //
-void myDisplayImage(HDC hdc, int offsetX, int offsetY, MyBGRA* pData, MyBmpInfo* pInfo);
+void myDisplayImage(HDC hdc, int offsetX, int offsetY, UINT cxValid, UINT cyValid,
+                    int imgX, int imgY, MyBGRA* pData, MyBmpInfo* pInfo);
 
 RECT myGetGrayTransWndInitSize();
 
@@ -259,14 +303,23 @@ void myRegulateHistogram(MyBGRA* pData, MyBmpInfo* pInfo, double pHist[256], dou
 RECT myGetSpafGeneWndInitSize();
 
 // Allocate a buffer and populate the buffer with mirrored image data.
+// Note [real increment size] = 2 * [expand size] (sum of both sides).
 //
 // @param pData: the origin image to expand.
 // @param pInfo: points to image pixel info.
-// @param nExpandSize: how far out should expand.
+// @param xExpandSize: how far out should expand in horizontal.
+// @param yExpandSize: how far out should expand in vertical.
 // 
 // @return the mirrored pixel data buffer.
 //
-MyBGRA* myExpandMirrorImage(MyBGRA* pData, MyBmpInfo* pInfo, UINT nExpandSize);
+MyBGRA* myExpandMirrorImage(MyBGRA* pData, MyBmpInfo* pInfo, UINT xExpandSize, UINT yExpandSize);
+
+// Populate new pixels as black.
+MyBGRA* myExpand2xBlackImage(MyBGRA* pData, MyBmpInfo* pInfo);
+// Populate new pixels as mirrored.
+MyBGRA* myExpand2xMirrorImage(MyBGRA* pData, MyBmpInfo* pInfo);
+// Populate new pixels as boundary color.
+MyBGRA* myExpand2xCopyImage(MyBGRA* pData, MyBmpInfo* pInfo);
 
 // Define these funcs to customize square separable filter.
 // @see mySquareSeparableFilter for details.
@@ -369,7 +422,7 @@ long double mycpMagnitude(MyComplex* z)
 
 // Return phase of the complex number.
 long double mycpPhase(MyComplex* z)
-{ return atan2(z->imag, z->real); }
+{ return (z->real == 0 && z->imag == 0) ? 0 : atan2(z->imag, z->real); }
 
 // Invert [z].
 void mycpMinusInPlace(MyComplex* z)
@@ -406,8 +459,12 @@ MyComplex mycpSub(MyComplex* z1, MyComplex* z2)
 // Populate [g] with [z1 * z2].
 void mycpMulInPlace(MyComplex* z1, MyComplex* z2, MyComplex* g)
 {
-    g->real = z1->real * z2->real - z1->imag * z2->imag;
+    // Note the multiplication depends both of the real and imag part,
+    // so we must use a intermidiate variable to store the 1st result!
+    // (In case that the user calls with  [ g = z1 ]  or  [ g = z2 ] )
+    long double tmpReal = z1->real * z2->real - z1->imag * z2->imag;
     g->imag = z1->real * z2->imag + z1->imag * z2->real;
+    g->real = tmpReal; // In case real changed before calculate imag.
 }
 
 // Populate [g] with [c * z].
@@ -433,8 +490,9 @@ MyComplex mycpMulScalar(long double c, MyComplex* z)
 void mycpDivInPlace(MyComplex* z1, MyComplex* z2, MyComplex* g)
 {
     long double z2mag = z2->real * z2->real + z2->imag * z2->imag;
-    g->real = (z1->real * z2->real + z1->imag * z2->imag) / z2mag;
+    long double tmpReal = (z1->real * z2->real + z1->imag * z2->imag) / z2mag;
     g->imag = (z1->imag * z2->real - z1->real * z2->imag) / z2mag;
+    g->real = tmpReal; // @see mycpMulInPlace for the necessity of tmpReal.
 }
 
 // Return [z1 / z2].
@@ -472,15 +530,18 @@ MyComplex mycpEj(long double power)
 void mycpDFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre);
 void mycpIDFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre);
 
+// Get radix 2 of the number;
+// return UINT_MAX if failed.
+UINT myGetRadix2(UINT num);
+
 // 1-Dimension FFT/IFFT (in place).
 //
-// @param pDst: transformed results.
-// @param Psrc: origin complex data.
-// @param L: convolution array length.
+// @param pData: complex data array.
+// @param R: array length [radix 2].
 // @param incre: 1 or L, for 2-D data.
 //
-void mycpFFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre);
-void mycpIFFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre);
+void mycpFFT(MyComplex* pData, UINT R, UINT incre);
+void mycpIFFT(MyComplex* pData, UINT R, UINT incre);
 
 // 2-Dimension DFT/IDFT (heap alloc).
 //
@@ -497,12 +558,14 @@ MyComplex* mycpIDFT2(MyComplex* pData, UINT M, UINT N);
 //
 // @param pData: origin complex data.
 // @param M: convolution core width.
+// @param RM: core width [radix 2].
 // @param N: convolution core height.
+// @param RN: core height [radix 2].
 //
 // @return related freq-domain result [M x N].
 //
-MyComplex* mycpFFT2(MyComplex* pData, UINT M, UINT N);
-MyComplex* mycpIFFT2(MyComplex* pData, UINT M, UINT N);
+MyComplex* mycpFFT2(MyComplex* pData, UINT M, UINT RM, UINT N, UINT RN);
+MyComplex* mycpIFFT2(MyComplex* pData, UINT M, UINT RM, UINT N, UINT RN);
 
 // @see myLogarithmTrans for more detials.
 // This func will populate pDst with normalized logarithm of real parts in pSrc.
@@ -516,8 +579,13 @@ void mycpLogarithmTrans(MyBGRA* pDst, MyComplex* pSrc, UINT M, UINT N, long doub
 // @param pSrc: the source image.
 // @param pInfo: points to image pixel info.
 // @param dLogParam: [c] in [c * log(1 + r)].
+// 
+// @return origin calculated power spectral.
 //
-void myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam);
+MyComplex* myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam);
+// FFT accelerated version of power spectral.
+// @see mycpFFT2 for details about RM and RN.
+MyComplex* myPowerSpectralFFT(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT RM, UINT RN, long double dLogParam);
 
 // Populate destination image with the frequency phase-spectral of source image.
 // To make the freq-spectral shown at the center, (-1)^(x+y) is applied before transform.
@@ -527,8 +595,92 @@ void myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double d
 // @param pSrc: the source image.
 // @param pInfo: points to image pixel info.
 // @param dLogParam: [c] in [c * log(1 + r)].
+// 
+// @return origin calculated phase spectral.
 //
-void myPhaseSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam);
+MyComplex* myPhaseSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam);
+// FFT accelerated version of phase spectral.
+// @see mycpFFT2 for details about RM and RN.
+MyComplex* myPhaseSpectralFFT(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT RM, UINT RN, long double dLogParam);
+
+// Populate the destination image with rebuilt pixels from spectrals.
+// The effective power and phase data are stored in their real parts.
+//
+// @param dst: the destination image.
+// @param info: the image pixel info.
+// @param power: source power spectral.
+// @param phase: source phase spectral.
+//
+void mySpectralReconstruct(MyBGRA* dst, MyBmpInfo* info, MyComplex* power, MyComplex* phase);
+// FFT accelerated version of spectral reconstruct.
+// @see mycpFFT2 for details about RM and RN.
+void mySpectralReconstructFFT(MyBGRA* dst, MyBmpInfo* info, UINT RM, UINT RN, MyComplex* power, MyComplex* phase);
+
+// Expand origin image to radix 2 of FFT.
+//
+// @param info: size info after padding.
+// @param origin: points to origin image.
+// @param originInfo: points to origin size info.
+//
+// @return expanded image after padding.
+//
+MyBGRA* myPaddingZeroImageFFT(MyBmpInfo* info, MyBGRA* origin, MyBmpInfo* originInfo);
+
+// Expand origin spectral to radix 2 of FFT.
+//
+// @param info: size info after padding.
+// @param origin: points to origin spectral.
+// @param originInfo: points to origin size info.
+//
+// @return expanded spectral after padding.
+//
+MyComplex* myPaddingZeroSpectralFFT(MyComplex* origin, MyBmpInfo* originInfo);
+
+// Process the image spectral with ideal low/high pass filter.
+//
+// @param spectral: spectral to be processed.
+// @param info: size info of target spectral.
+// @param center, radius: ILPF/IHPF required args.
+// @param nFilterCount: number of required args.
+//
+void myTfuncIdealLPF(MyComplex* spectral, MyBmpInfo* info, POINT* center, double* radius, UINT nFilterCount);
+void myTfuncIdealHPF(MyComplex* spectral, MyBmpInfo* info, POINT* center, double* radius, UINT nFilterCount);
+
+// Process the image spectral with gaussian low/high pass filter.
+//
+// @param spectral: spectral to be processed.
+// @param info: size info of target spectral.
+// @param center, sigma: GLPF/GHPF required args.
+// @param nFilterCount: number of required args.
+//
+void myTfuncGaussianLPF(MyComplex* spectral, MyBmpInfo* info, POINT* center, double* sigma, UINT nFilterCount);
+void myTfuncGaussianHPF(MyComplex* spectral, MyBmpInfo* info, POINT* center, double* sigma, UINT nFilterCount);
+
+// Process the image spectral with butterworth low/high pass filter.
+//
+// @param spectral: spectral to be processed.
+// @param info: size info of target spectral.
+// @param center, cutoff: BLPF/BHPF required args.
+// @param nOrder: control shape of the curve.
+// @param nFilterCount: number of required args.
+//
+void myTfuncButterworthLPF(MyComplex* spectral, MyBmpInfo* info,
+                           POINT* center, double* cutoff, double nOrder, UINT nFilterCount);
+void myTfuncButterworthHPF(MyComplex* spectral, MyBmpInfo* info,
+                           POINT* center, double* cutoff, double nOrder, UINT nFilterCount);
+
+// Process the image spectral with homomorphic filter (gaussian fitting).
+//
+// @param spectral: spectral to be processed.
+// @param info: size info of target spectral.
+// @param center, sigma: homomorphic filter required args.
+// @param c: control slope of fitted curve.
+// @param gammaLow: low threshold of fitted curve.
+// @param gammaHigh: high threshold of fitted curve.
+// @param nFilterCount: number of required args.
+//
+void myTfuncHomomorphicFilter(MyComplex* spectral, MyBmpInfo* info,
+    POINT* center, double* sigma, double c, double gammaLow, double gammaHigh, UINT nFilterCount);
 
 //-------------------------------------------------------------------------------------------------
 // Main Function
@@ -545,9 +697,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
     WNDCLASS wndclass;
 
     gInstance = hInstance;
-
+    
+    // Query system metrics info.
     gCxIcon = GetSystemMetrics(SM_CXICON);
     gCyIcon = GetSystemMetrics(SM_CYICON);
+
+    gCaptionHeight = GetSystemMetrics(SM_CYCAPTION);
+
+    gCharWidth = LOWORD(GetDialogBaseUnits());
+    gCharHeight = HIWORD(GetDialogBaseUnits());
+
+    gCxVertScr = GetSystemMetrics(SM_CXVSCROLL);
+    gCyVertScr = GetSystemMetrics(SM_CYVSCROLL);
+    gCxHorzScr = GetSystemMetrics(SM_CXHSCROLL);
+    gCyHorzScr = GetSystemMetrics(SM_CYHSCROLL);
+
+    gMaxClntWidth = GetSystemMetrics(SM_CXFULLSCREEN);
+    // We have to take menu size into consideration.
+    gMaxClntHeight = GetSystemMetrics(SM_CYFULLSCREEN) -
+                     GetSystemMetrics(SM_CYMENU);
 
     UINT originStyle;
     // Main Window
@@ -596,7 +764,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
     wndclass.lpszClassName = gAppAboutWndName;
     RegisterClass(&wndclass);
 
+    // Create main menu.
     gMenu = myLoadMainMenu();
+    // Create main window.
     gMainWnd = CreateWindow(
         gMainWndName,
         L"Bitmap Viewer",
@@ -609,15 +779,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
         gMenu,
         hInstance,
         NULL);
+    // Create main accelerator table.
+    gAccel = myLoadMainAccel();
 
     ShowWindow(gMainWnd, nShowCmd);
     UpdateWindow(gMainWnd);
 
     while (GetMessage(&msg, NULL, 0, 0))
     {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        if (!TranslateAccelerator(gMainWnd, gAccel, &msg))
+        {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
     }
+
+    // Note we have created custom accelerator table.
+    DestroyAcceleratorTable(gAccel);
+
     return (int)msg.wParam;
 }
 
@@ -633,6 +812,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
 \**************************************************************************************************/
 //#################################################################################################
 
+// Use double-digit for main window widgets;
+// 80 ~ 99 are available for the time being.
+#define MAIN_MOVE_BTN 80
+#define MAIN_SELECT_BTN 81
+#define MAIN_CLIP_BTN 82
+#define MAIN_EYEDROPPER_BTN 83
+#define MAIN_FILL_BTN 84
+#define MAIN_BRUSH_BTN 85
+#define MAIN_BRUSH_RADIUS_LBL 86
+#define MAIN_BRUSH_RADIUS_EDT 87
+#define MAIN_COLOR_BLOCK_BTN 88
+
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     static HDC hdc;
@@ -641,26 +832,156 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
     static UINT left, top;
     static UINT width, height;
 
+    // Tool Bar
+    static HWND
+        btnMove, // Active to move the picture around.
+        btnSelect, // Active to select a rectangle area.
+        btnClip, // Push to clip current selected area.
+        btnEyedropper, // Active to extract color under cursor.
+        btnFill, // Push to fill up current selected area.
+        btnBrush, // Active to draw pixels on the picture.
+        lblBrushRadius,
+        edtBrushRadius, // Modify brush pixel block radius.
+        btnColorBlock; // Modify brush pixel pure color.
+
+    // Current selected tool operation.
+    static HWND currOperation;
+    // Whether the operation could be done.
+    static BOOL bReadyForWork = FALSE;
+
+    // Available display area for image.
+    static int validWidth = 0;
+    static int validHeight = 0;
+
+    // Work with Move tool operation.
+    static int xImgAnchor = 0, yImgAnchor = 0;
+
+    // Work with Select, Clip & Fill tool operation.
+    static RECT selectArea = { 0, 0, 0, 0 };
+    static HPEN slctDashPen;
+
+    // Work with Brush tool operation.
+    static UINT nBrushRadius = 10;
+
+    // Current selected color for Fill & Brush.
+    static MyBGRA currColor = { 255, 255, 255, 255 };
+    static COLORREF aCustomColors[16];
+    static CHOOSECOLOR sChooseColor; // used to create color dialog
+    static HBRUSH brColorBlock; // used to erase color block bkgn
+
     switch (message)
     {
     case WM_CREATE:
     {
-        // Query system metrics info.
-        gCaptionHeight = GetSystemMetrics(SM_CYCAPTION);
-
-        gCharWidth = LOWORD(GetDialogBaseUnits());
-        gCharHeight = HIWORD(GetDialogBaseUnits());
-
-        gCxVertScr = GetSystemMetrics(SM_CXVSCROLL);
-        gCyVertScr = GetSystemMetrics(SM_CYVSCROLL);
-        gCxHorzScr = GetSystemMetrics(SM_CXHSCROLL);
-        gCyHorzScr = GetSystemMetrics(SM_CYHSCROLL);
-
         // Initialize common dialog utils.
         myInitFileDialogInfo(hwnd);
 
         // Grayed all operations until user open an image.
         myDisableOperationMenus();
+
+        // Initialize choose color struct.
+        CHOOSECOLOR* pcc = &sChooseColor;
+        pcc->lStructSize = sizeof(CHOOSECOLOR);
+        pcc->hwndOwner = hwnd;
+        pcc->hInstance = NULL; // HWND
+
+        // Designate/Return user selected color.
+        pcc->rgbResult = RGB(
+            currColor.R, currColor.G, currColor.B);
+
+        pcc->lpCustColors = aCustomColors;
+        pcc->Flags = CC_RGBINIT;
+        pcc->lCustData = 0; // NULL
+        pcc->lpfnHook = NULL;
+        pcc->lpTemplateName = NULL;
+
+        // Create brush to erase color block's bkgn.
+        brColorBlock = CreateSolidBrush(pcc->rgbResult);
+
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        // Create tool bar widgets.
+#define MY_CREATE_MAIN_BTN(Btn_Handle, Btn_Text, Btn_ID, Btn_Idx) \
+    MY_CREATE_MAIN_BTN_EX(Btn_Handle, Btn_Text, Btn_ID, 5 + Btn_Idx * (8 * gCharWidth + 5))
+
+#define MY_CREATE_MAIN_BTN_EX(Btn_Handle, Btn_Text, Btn_ID, Btn_Pos) \
+    Btn_Handle = CreateWindow( \
+        L"button", \
+        Btn_Text, \
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, \
+        Btn_Pos, \
+        rc.bottom - 2 * gCharHeight - 5, \
+        8 * gCharWidth, \
+        2 * gCharHeight, \
+        hwnd, \
+        (HMENU)Btn_ID, \
+        gInstance, \
+        NULL); /* Hide on created */ \
+        ShowWindow(Btn_Handle, SW_HIDE);
+
+        MY_CREATE_MAIN_BTN(btnMove, L"移动 M", MAIN_MOVE_BTN, 0);
+        MY_CREATE_MAIN_BTN(btnSelect, L"选取 S", MAIN_SELECT_BTN, 1);
+        MY_CREATE_MAIN_BTN(btnClip, L"裁剪 C", MAIN_CLIP_BTN, 2);
+        MY_CREATE_MAIN_BTN(btnEyedropper, L"吸管 E", MAIN_EYEDROPPER_BTN, 3);
+        MY_CREATE_MAIN_BTN(btnFill, L"填充 F", MAIN_FILL_BTN, 4);
+        MY_CREATE_MAIN_BTN(btnBrush, L"画刷 B", MAIN_BRUSH_BTN, 5);
+
+        // Create brush radius text label & edit line.
+        lblBrushRadius = CreateWindow(
+            L"static",
+            L"半径",
+            WS_CHILD | WS_VISIBLE | SS_CENTER,
+            35 + 48 * gCharWidth,
+            rc.bottom - 3 * gCharHeight / 2 - 5,
+            4 * gCharWidth,
+            gCharHeight,
+            hwnd,
+            (HMENU)MAIN_BRUSH_RADIUS_LBL,
+            gInstance,
+            NULL);
+        ShowWindow(lblBrushRadius, SW_HIDE);
+        edtBrushRadius = CreateWindow(
+            L"edit",
+            L"10",
+            WS_CHILD | WS_VISIBLE,
+            40 + 52 * gCharWidth,
+            rc.bottom - 3 * gCharHeight / 2 - 5,
+            2 * gCharWidth + 5,
+            gCharHeight,
+            hwnd,
+            (HMENU)MAIN_BRUSH_RADIUS_EDT,
+            gInstance,
+            NULL);
+        ShowWindow(edtBrushRadius, SW_HIDE);
+
+        // Create color select button.
+        btnColorBlock = CreateWindow(
+            L"button",
+            NULL,
+            // Use BS_OWNERDRAW to customize bkgn of color block.
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_OWNERDRAW,
+            50 + 54 * gCharWidth,
+            rc.bottom - 2 * gCharHeight - 5,
+            2 * gCharHeight,
+            2 * gCharHeight,
+            hwnd,
+            (HMENU)MAIN_COLOR_BLOCK_BTN,
+            gInstance,
+            NULL);
+        ShowWindow(btnColorBlock, SW_HIDE);
+
+#undef MY_CREATE_MAIN_BTN_EX
+#undef MY_CREATE_MAIN_BTN
+
+        validWidth = gBmpInfo.nWidth;
+        validHeight = gBmpInfo.nHeight;
+        // Create select rect frame pen.
+        slctDashPen = CreatePen(PS_DASH, 1, RGB(255, 0, 0));
+
+        // Select move as initial operation.
+        currOperation = btnMove;
+        SendMessage(btnMove, BM_SETSTATE, 1, 0);
+
         return 0;
     }
     case WM_MOVE:
@@ -668,71 +989,816 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         top = HIWORD(lParam);
         return 0;
 
+    // Tool bar widget accelerators.
+    case WM_KEYDOWN:
+    {
+        // There's no need to erase since double-buffer is enabled.
+        InvalidateRect(hwnd, NULL, FALSE);
+
+        // Active Clip selected state button when hold down.
+        if (wParam == 'C')
+        {
+            SendMessage(btnClip, BM_SETSTATE, 1, 0);
+            // Trigger operation immediately.
+            SendMessage(hwnd, WM_COMMAND, MAKEWPARAM(MAIN_CLIP_BTN, 0), 0);
+            return 0;
+        }
+
+#define MY_SEND_BTN_MSG(Btn_Handle, Btn_Key, Btn_ID) \
+    if (wParam == Btn_Key) SendMessage(hwnd, WM_COMMAND, MAKEWPARAM(Btn_ID, 0), 0)
+
+        MY_SEND_BTN_MSG(btnMove, 'M', MAIN_MOVE_BTN);
+        MY_SEND_BTN_MSG(btnSelect, 'S', MAIN_SELECT_BTN);
+        MY_SEND_BTN_MSG(btnClip, 'C', MAIN_CLIP_BTN);
+        MY_SEND_BTN_MSG(btnEyedropper, 'E', MAIN_EYEDROPPER_BTN);
+        MY_SEND_BTN_MSG(btnFill, 'F', MAIN_FILL_BTN);
+        MY_SEND_BTN_MSG(btnBrush, 'B', MAIN_BRUSH_BTN);
+
+        POINT pt;
+        // Force repaint cursor.
+        GetCursorPos(&pt);
+        SetCursorPos(pt.x, pt.y);
+
+#undef MY_SEND_BTN_MSG
+
+        return 0;
+    }
+    case WM_KEYUP:
+    {
+        if (wParam == 'C')
+        {
+            // Cancel Clip button selected state after key up.
+            SendMessage(btnClip, BM_SETSTATE, 0, 0);
+        }
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+    {
+        static int csorCurrX, csorCurrY;
+        static int csorLastX, csorLastY;
+
+        csorCurrX = GET_X_LPARAM(lParam);
+        csorCurrY = GET_Y_LPARAM(lParam);
+
+        if (bReadyForWork) // in workspace
+        {
+            //------------------------------------------------------------------- Move Tool
+            if (currOperation == btnMove)
+            {
+                if (wParam & MK_LBUTTON)
+                {
+                    // Note +/- to match image coordinate.
+                    xImgAnchor -= (csorCurrX - csorLastX);
+                    yImgAnchor += (csorCurrY - csorLastY);
+
+                    // Clamp image anchor offset into valid range.
+                    // X offset: 0 ~ (ImgW - ValidW)
+                    int xOffsetMost = gBmpInfo.nWidth - validWidth;
+                    xImgAnchor = max(0, min(xOffsetMost, xImgAnchor));
+                    // Y offset: (ValidH - ImgH) ~ 0
+                    int yOffsetMost = validHeight - gBmpInfo.nHeight;
+                    yImgAnchor = max(yOffsetMost, min(0, yImgAnchor));
+
+                    // There's no need to erase since double-buffer is enabled.
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+            }
+            //------------------------------------------------------------------- Select Tool
+            else if (currOperation == btnSelect)
+            {
+                if (wParam & MK_LBUTTON)
+                {
+
+#define MY_LEFT_SPACE 1
+#define MY_RIGHT_SPACE 2
+#define MY_TOP_SPACE 3
+#define MY_BOTTOM_SPACE 4
+
+                    // Note the move direction is significant!
+                    static int xMoveDir = MY_RIGHT_SPACE, yMoveDir = MY_BOTTOM_SPACE;
+
+                    // From image coordinate to window coordinate.
+                    OffsetRect(&selectArea, 18 - abs(xImgAnchor), 18 - abs(yImgAnchor));
+
+                    switch (xMoveDir)
+                    {
+                    case MY_LEFT_SPACE:
+                        if (csorCurrX > selectArea.right) // Enter right space.
+                        {
+                            xMoveDir = MY_RIGHT_SPACE;
+                            selectArea.right = csorCurrX;
+                        }
+                        else selectArea.left = csorCurrX;
+                        break;
+                    case MY_RIGHT_SPACE:
+                        if (csorCurrX < selectArea.left) // Enter left space.
+                        {
+                            xMoveDir = MY_LEFT_SPACE;
+                            selectArea.left = csorCurrX;
+                        }
+                        else selectArea.right = csorCurrX;
+                        break;
+                    default:
+                        break;
+                    }
+
+                    switch (yMoveDir)
+                    {
+                    case MY_TOP_SPACE:
+                        if (csorCurrY > selectArea.bottom) // Enter bottom space.
+                        {
+                            yMoveDir = MY_BOTTOM_SPACE;
+                            selectArea.bottom = csorCurrY;
+                        }
+                        else selectArea.top = csorCurrY;
+                        break;
+                    case MY_BOTTOM_SPACE:
+                        if (csorCurrY < selectArea.top) // Enter top space.
+                        {
+                            yMoveDir = MY_TOP_SPACE;
+                            selectArea.top = csorCurrY;
+                        }
+                        else selectArea.bottom = csorCurrY;
+                        break;
+                    default:
+                        break;
+                    }
+
+                    // From window coordinate to image coordinate.
+                    OffsetRect(&selectArea, -18 + abs(xImgAnchor), -18 + abs(yImgAnchor));
+
+#undef MY_LEFT_SPACE
+#undef MY_RIGHT_SPACE
+#undef MY_TOP_SPACE
+#undef MY_BOTTOM_SPACE
+
+                    // Clamp to available image area. Cast UINT to INT to avoid overflow.
+                    selectArea.left = max(0, min((int)gBmpInfo.nWidth, selectArea.left));
+                    selectArea.right = max(0, min((int)gBmpInfo.nWidth, selectArea.right));
+                    selectArea.top = max(0, min((int)gBmpInfo.nHeight, selectArea.top));
+                    selectArea.bottom = max(0, min((int)gBmpInfo.nHeight, selectArea.bottom));
+
+                    // There's no need to erase since double-buffer is enabled.
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+            }
+            //------------------------------------------------------------------- Eyedropper Tool
+            else if (currOperation == btnEyedropper)
+            {
+                if (wParam & MK_LBUTTON)
+                {
+                    currColor = gImage[csorCurrX - 18 + abs(xImgAnchor) + // Note image Y-axis is flipped.
+                        (gBmpInfo.nHeight - (csorCurrY - 18 + abs(yImgAnchor))) * gBmpInfo.nWidth];
+
+                    DeleteObject(brColorBlock); // Recreate bkgn pen with picked color.
+                    brColorBlock = CreateSolidBrush(RGB(currColor.R, currColor.G, currColor.B));
+
+                    InvalidateRect(btnColorBlock, NULL, TRUE);
+                }
+            }
+            //------------------------------------------------------------------- Brush Tool
+            else if (currOperation == btnBrush)
+            {
+                // Notify show hint rect.
+                // There's no need to erase since double-buffer is enabled.
+                InvalidateRect(hwnd, NULL, FALSE);
+
+                if (wParam & MK_LBUTTON)
+                {
+                    int xStart = csorCurrX - nBrushRadius - 18 + abs(xImgAnchor); xStart = max(0, xStart);
+                    int yStart = csorCurrY - nBrushRadius - 18 + abs(yImgAnchor); yStart = max(0, yStart);
+                    int xEnd = xStart + 2 * (int)nBrushRadius + 1; xEnd = min((int)gBmpInfo.nWidth, xEnd);
+                    int yEnd = yStart + 2 * (int)nBrushRadius + 1; yEnd = min((int)gBmpInfo.nHeight, yEnd);
+                    // Paint square block with brush color.
+                    for (int i = xStart; i < xEnd; ++i)
+                        for (int j = yStart; j < yEnd; ++j)
+                        {
+                            // Note image Y-axis is flipped.
+                            gImage[i + (gBmpInfo.nHeight - j - 1) * gBmpInfo.nWidth] = currColor;
+                        }
+                    // There's no need to erase since double-buffer is enabled.
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+            }
+        }
+        csorLastX = csorCurrX;
+        csorLastY = csorCurrY;
+        return 0;
+    }
+    case WM_LBUTTONDOWN:
+    {
+        SetFocus(hwnd);
+
+        int csorCurrX = GET_X_LPARAM(lParam);
+        int csorCurrY = GET_Y_LPARAM(lParam);
+
+        if (bReadyForWork) // in workspace
+        {
+            // Note these fields are only valid when select is verified,
+            // i.e. left != 0 || right != 0 || top != 0 || bottom != 0
+
+            //------------------------------------------------------------------- Select Tool
+            if (currOperation == btnSelect)
+            {
+                int tmpX = csorCurrX - 18 + abs(xImgAnchor);
+                int tmpY = csorCurrY - 18 + abs(yImgAnchor);
+
+                // We must cast UINT to INT to avoid overflow.
+                tmpX = max(0, min((int)gBmpInfo.nWidth, tmpX));
+                tmpY = max(0, min((int)gBmpInfo.nHeight, tmpY));
+
+                // Rest select rect frame to button down position.
+                selectArea.left = selectArea.right = tmpX;
+                selectArea.top = selectArea.bottom = tmpY;
+            }
+            //------------------------------------------------------------------- Eyedropper Tool
+            else if (currOperation == btnEyedropper)
+            {
+                currColor = gImage[csorCurrX - 18 + abs(xImgAnchor) + // Note image Y-axis is flipped.
+                    (gBmpInfo.nHeight - (csorCurrY - 18 + abs(yImgAnchor))) * gBmpInfo.nWidth];
+
+                DeleteObject(brColorBlock); // Recreate bkgn pen with picked color.
+                brColorBlock = CreateSolidBrush(RGB(currColor.R, currColor.G, currColor.B));
+
+                InvalidateRect(btnColorBlock, NULL, TRUE);
+            }
+            //------------------------------------------------------------------- Fill Tool
+            else if (currOperation == btnFill)
+            {
+                int i, j, idx; // Declare common index variables here.
+
+                // Populate selected (inversely) area if verified.
+                if (selectArea.left != 0 || selectArea.right != 0 ||
+                    selectArea.top != 0 || selectArea.bottom != 0)
+                {
+                    // Selected area size.
+                    int tmpImgW = selectArea.right - selectArea.left;
+                    int tmpImgH = selectArea.bottom - selectArea.top;
+                    // Note image Y-axis is flipped.
+                    int yStartIdx = gBmpInfo.nHeight - selectArea.top - tmpImgH;
+                     
+                    // From window coordinate to image coordinate.
+                    int tmpCsorX = csorCurrX - 18 + abs(xImgAnchor);
+                    int tmpCsorY = csorCurrY - 18 + abs(yImgAnchor);
+
+                    // Selected
+                    if (tmpCsorX >= selectArea.left && tmpCsorX <= selectArea.right &&
+                        tmpCsorY >= selectArea.top && tmpCsorY <= selectArea.bottom)
+                    {
+                        for (i = 0; i < tmpImgW; ++i)
+                            for (j = 0; j < tmpImgH; ++j)
+                            {
+                                idx = (i + selectArea.left) + (yStartIdx + j) * gBmpInfo.nWidth;
+                                gImage[idx] = currColor; // Fill up internal area with pure color.
+                            }
+                    }
+                    // Inversely Selected
+                    else
+                    {
+                        // Left
+                        for (i = 0; i < selectArea.left; ++i)
+                            for (j = 0; j < gBmpInfo.nHeight; ++j)
+                            {
+                                idx = i + j * gBmpInfo.nWidth;
+                                gImage[idx] = currColor;
+                            }
+                        // Top
+                        for (i = selectArea.left; i < selectArea.left + tmpImgW; ++i)
+                            for (j = 0; j < yStartIdx; ++j)
+                            {
+                                idx = i + j * gBmpInfo.nWidth;
+                                gImage[idx] = currColor;
+                            }
+                        // Right
+                        for (i = selectArea.left + tmpImgW; i < gBmpInfo.nWidth; ++i)
+                            for (j = 0; j < gBmpInfo.nHeight; ++j)
+                            {
+                                idx = i + j * gBmpInfo.nWidth;
+                                gImage[idx] = currColor;
+                            }
+                        // Bottom
+                        for (i = selectArea.left; i < selectArea.left + tmpImgW; ++i)
+                            for (j = yStartIdx + tmpImgH; j < gBmpInfo.nHeight; ++j)
+                            {
+                                idx = i + j * gBmpInfo.nWidth;
+                                gImage[idx] = currColor;
+                            }
+                    }
+                }
+                // Populate the whole image otherwise.
+                else
+                {
+                    for (i = 0; i < gBmpInfo.nWidth; ++i)
+                        for (j = 0; j < gBmpInfo.nHeight; ++j)
+                        {
+                            gImage[i + j * gBmpInfo.nWidth] = currColor;
+                        }
+                }
+                // There's no need to erase since double-buffer is enabled.
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+            //------------------------------------------------------------------- Brush Tool
+            else if (currOperation == btnBrush)
+            {
+                int xStart = csorCurrX - nBrushRadius - 18 + abs(xImgAnchor); xStart = max(0, xStart);
+                int yStart = csorCurrY - nBrushRadius - 18 + abs(yImgAnchor); yStart = max(0, yStart);
+                int xEnd = xStart + 2 * nBrushRadius + 1; xEnd = min(gBmpInfo.nWidth, xEnd);
+                int yEnd = yStart + 2 * nBrushRadius + 1; yEnd = min(gBmpInfo.nHeight, yEnd);
+                // Paint square block with brush color.
+                for (int i = xStart; i < xEnd; ++i)
+                    for (int j = yStart; j < yEnd; ++j)
+                    {
+                        // Note image Y-axis is flipped.
+                        gImage[i + (gBmpInfo.nHeight - j - 1) * gBmpInfo.nWidth] = currColor;
+                    }
+                // There's no need to erase since double-buffer is enabled.
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+        }
+        return 0;
+    }
+    case WM_LBUTTONUP:
+    {
+        int csorCurrX = GET_X_LPARAM(lParam);
+        int csorCurrY = GET_Y_LPARAM(lParam);
+
+        if (bReadyForWork) // in workspace
+        {
+            //------------------------------------------------------------------- Select Tool
+            if (currOperation == btnSelect)
+            {
+                // Check whether last select is valid.
+                if (selectArea.left == selectArea.right ||
+                    selectArea.top == selectArea.bottom)
+                {
+                    // Cancel origin selected rect frame.
+                    SetRectEmpty(&selectArea);
+                }
+                // There's no need to erase since double-buffer is enabled.
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+        }
+        return 0;
+    }
     case WM_SIZE:
+    {
+        // Display tool bar when image loaded.
+        static BOOL bShowToolBar = FALSE;
+        if (!bShowToolBar && gImage != NULL)
+        {
+            bShowToolBar = TRUE;
+            ShowWindow(btnMove, SW_SHOW);
+            ShowWindow(btnSelect, SW_SHOW);
+            ShowWindow(btnClip, SW_SHOW);
+            ShowWindow(btnEyedropper, SW_SHOW);
+            ShowWindow(btnFill, SW_SHOW);
+            ShowWindow(btnBrush, SW_SHOW);
+            ShowWindow(lblBrushRadius, SW_SHOW);
+            ShowWindow(edtBrushRadius, SW_SHOW);
+            ShowWindow(btnColorBlock, SW_SHOW);
+        }
+
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        int clntWidth = rc.right - rc.left;
+        int clntHeight = rc.bottom - rc.top;
+
+        // Recalculate available image area.
+        validWidth = rc.right - rc.left - 36;
+        validHeight = rc.bottom - rc.top - 41 - 2 * gCharHeight;
+        // Clamp to origin image size when window is larger.
+        validWidth = min(validWidth, gBmpInfo.nWidth);
+        validHeight = min(validHeight, gBmpInfo.nHeight);
+
+        // Always reset image anchor when resized.
+        xImgAnchor = yImgAnchor = 0;
+        // Always reset select rect frame when resized.
+        selectArea.left = selectArea.top = selectArea.right = selectArea.bottom = 0;
+
+        // Keep tool bar attached to window bottom.
+#define MY_STICK_BOTTOM_BTN(Btn_Handle, Btn_Idx) \
+    GetWindowRect(Btn_Handle, &rc); \
+    MoveWindow(Btn_Handle, \
+        5 + Btn_Idx * (8 * gCharWidth + 5), \
+        clntHeight - 5 - 2 * gCharHeight, \
+        rc.right - rc.left, rc.bottom - rc.top, TRUE)
+
+        MY_STICK_BOTTOM_BTN(btnMove, 0);
+        MY_STICK_BOTTOM_BTN(btnSelect, 1);
+        MY_STICK_BOTTOM_BTN(btnClip, 2);
+        MY_STICK_BOTTOM_BTN(btnEyedropper, 3);
+        MY_STICK_BOTTOM_BTN(btnFill, 4);
+        MY_STICK_BOTTOM_BTN(btnBrush, 5);
+
+#undef MY_STICK_BOTTOM_BTN
+
+        GetWindowRect(lblBrushRadius, &rc);
+        MoveWindow(lblBrushRadius, 35 + 48 * gCharWidth,
+                   clntHeight - 3 * gCharHeight / 2 - 5,
+                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
+
+        GetWindowRect(edtBrushRadius, &rc);
+        MoveWindow(edtBrushRadius, 40 + 52 * gCharWidth,
+                   clntHeight - 3 * gCharHeight / 2 - 5,
+                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
+
+        GetWindowRect(btnColorBlock, &rc);
+        MoveWindow(btnColorBlock, 50 + 54 * gCharWidth,
+                   clntHeight - 2 * gCharHeight - 5,
+                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
+
         width = LOWORD(lParam);
         height = HIWORD(lParam);
         return 0;
-
+    }
     case WM_SETFOCUS:
         // Close app about window if focused.
         if (IsWindow(gAppAboutWnd)) DestroyWindow(gAppAboutWnd);
         return 0;
 
+    case WM_SETCURSOR:
+    {
+        if (gImage != NULL)
+        {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(hwnd, &pt);
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+
+            // Get valid area boundary.
+            int tmpWndRightMost = rc.right - 18;
+            int tmpImgRightMost = 18 + gBmpInfo.nWidth;
+            int tmpWndBottomMost = rc.bottom - 23 - 2 * gCharHeight;
+            int tmpImgBottomMost = 18 + gBmpInfo.nHeight;
+
+            // Select cursor appearance according to current tool operation.
+#define MY_SET_CURSOR(Btn_Handle, Cursor_ID) \
+    (currOperation == Btn_Handle) SetCursor(LoadCursor(NULL, MAKEINTRESOURCE(Cursor_ID)))
+
+#define MY_SET_CURSOR_IF(Btn_Handle, Cursor_ID) if MY_SET_CURSOR(Btn_Handle, Cursor_ID)
+#define MY_SET_CURSOR_ELIF(Btn_Handle, Cursor_ID) else if MY_SET_CURSOR(Btn_Handle, Cursor_ID)
+
+            // Check whether above the image.
+            
+            // Clamp to valid image area for these tool operations.
+            if (pt.x >= 18 && pt.x < min(tmpImgRightMost, tmpWndRightMost) &&
+                pt.y >= 18 && pt.y < min(tmpImgBottomMost, tmpWndBottomMost))
+            {
+                MY_SET_CURSOR_IF(btnMove, IDC_SIZEALL);
+                MY_SET_CURSOR_ELIF(btnSelect, IDC_CROSS);
+                MY_SET_CURSOR_ELIF(btnEyedropper, IDC_PIN);
+                MY_SET_CURSOR_ELIF(btnFill, IDC_HAND);
+                MY_SET_CURSOR_ELIF(btnBrush, IDC_PERSON);
+
+                bReadyForWork = TRUE; // cursor in workspace
+
+                return 0;
+            }
+            // We decide that cursor area is more larger for Select tool.
+            else if (pt.x > 0 && pt.x < rc.right &&
+                     pt.y > 0 && pt.y < (rc.bottom - 5 - 2 * gCharHeight))
+            {
+                if (currOperation == btnSelect)
+                {
+                    SetCursor(LoadCursor(NULL, MAKEINTRESOURCE(IDC_CROSS)));
+                    bReadyForWork = TRUE; // cursor in Select tool workspace
+                    return 0;
+                }
+            }
+
+            // There's no need to erase since double-buffer is enabled.
+            if (bReadyForWork) InvalidateRect(hwnd, NULL, FALSE);
+            bReadyForWork = FALSE; // cursor out of workspace
+
+#undef MY_SET_CURSOR
+#undef MY_SET_CURSOR_IF
+#undef MY_SET_CURSOR_ELIF
+        }
+        break; // Use default cursor in other places.
+    }
     case WM_PAINT:
     {
         hdc = BeginPaint(hwnd, &ps);
 
+        RECT rcClnt;
+        GetClientRect(hwnd, &rcClnt);
+        //--------------------------------------------------------------------- Double Buffer Start
+        HDC hMemDC = CreateCompatibleDC(hdc); // Acquire copy device context.
+        HBITMAP hMemBmp = CreateCompatibleBitmap( // Draw on temporary bitmap.
+            hdc, rcClnt.right - rcClnt.left, rcClnt.bottom - rcClnt.top);
+        SelectObject(hMemDC, hMemBmp);
+        // Erase with master window's bkgn brush.
+        FillRect(hMemDC, &rcClnt, (HBRUSH)GetClassLongPtr(hwnd, GCLP_HBRBACKGROUND));
+        //---------------------------------------------------------------------
+
         int x, y;
         if (gImage == NULL)
         {
+            static WCHAR szHomeLabel[] = L"新建或打开一个图片";
+
+            SIZE tmpSize;
+            GetTextExtentExPoint(hMemDC, szHomeLabel, _countof(szHomeLabel) - 1, INT_MAX, NULL, NULL, &tmpSize);
+
+            x = (width - tmpSize.cx) / 2;
+            y = (height - tmpSize.cy) / 2;
             // Display hint text in the center of main window.
-            x = ((int)width - (int)(18 * gCharWidth)) / 2;
-            y = ((int)height - (int)(2 * gCharHeight)) / 2;
-            TextOut(hdc, x, y, L"新建或打开一个图片", 9);
+            TextOut(hMemDC, x, y, szHomeLabel, _countof(szHomeLabel) - 1);
         }
         else
         {
-            // Stick image to left top corner of main window.
-            myDisplayImage(hdc, 18, 0, gImage, &gBmpInfo);
+            int xValidRight = 18 + validWidth;
+            int yValidBottom = 18 + validHeight;
+
+            // We have to do this to stick the image at left top,
+            // since Y-axis is flipped in origin pixel buffer.
+            int tmpImgY = validHeight - gBmpInfo.nHeight;
+
+            // Display image from left top corner of main window.
+            myDisplayImage(hMemDC, 18, 18, max(0, validWidth), max(0, validHeight),
+                           xImgAnchor, abs(min(0, tmpImgY)) + yImgAnchor, gImage, &gBmpInfo);
+            
+            // Display selected rect frame (if verified).
+            if (selectArea.left != 0 || selectArea.right != 0 || selectArea.top != 0 || selectArea.bottom != 0)
+            {
+                HPEN tmpPen = SelectObject(hMemDC, slctDashPen);
+                HBRUSH tmpBrush = SelectObject(hMemDC, GetStockObject(NULL_BRUSH));
+
+                // Coordinate: image -> window -> image.
+                OffsetRect(&selectArea, 18 - abs(xImgAnchor), 18 - abs(yImgAnchor));
+                Rectangle(hMemDC, max(18, selectArea.left), max(18, selectArea.top),
+                          min(xValidRight, selectArea.right), min(yValidBottom, selectArea.bottom));
+                OffsetRect(&selectArea, -18 + abs(xImgAnchor), -18 + abs(yImgAnchor));
+
+                SelectObject(hMemDC, tmpPen);
+                SelectObject(hMemDC, tmpBrush);
+            }
+
+            // Display brush radius hint (if using brush tool).
+            if (currOperation == btnBrush && bReadyForWork)
+            {
+                POINT hintPT;
+                GetCursorPos(&hintPT);
+                ScreenToClient(hwnd, &hintPT);
+
+                // Hint rect visible boundary.
+                int hintLeft = hintPT.x - (int)nBrushRadius, hintTop = hintPT.y - (int)nBrushRadius;
+                // Note [FillRect] wouldn't draw the right bottom border of the rect,
+                // so we need to expand the right bottom coordinate with 1 pixel here.
+                int hintRight = hintPT.x + (int)nBrushRadius + 1, hintBottom = hintPT.y + (int)nBrushRadius + 1;
+
+                // In case paint out of valid area.
+                int xMostRight = 18 + validWidth, yMostBottom = 18 + validHeight;
+
+                RECT hintRC = { max(18, hintLeft), max(18, hintTop),
+                    min(xMostRight, hintRight), min(yMostBottom, hintBottom) };
+
+                FillRect(hMemDC, &hintRC, brColorBlock);
+            }
         }
+
+        //--------------------------------------------------------------------- Double Buffer End
+        BitBlt(hdc, 0, 0, rcClnt.right - rcClnt.left,
+               rcClnt.bottom - rcClnt.top, hMemDC, 0, 0, SRCCOPY);
+        DeleteDC(hMemDC);
+        DeleteObject(hMemBmp);
+        //---------------------------------------------------------------------
 
         EndPaint(hwnd, &ps);
         return 0;
+    }
+    case WM_CTLCOLORBTN:
+    {
+        // Overwrite the subroutine to customize color block button.
+        // Update color block's background with user selected color.
+        if ((HWND)lParam == btnColorBlock)
+        {
+            HDC hdcColorBlock = (HDC)wParam;
+
+            RECT rc;
+            GetClientRect(btnColorBlock, &rc);
+            // Select pen & brush.
+            HPEN tmpPen = SelectObject(hdcColorBlock, GetStockObject(BLACK_PEN));
+            HBRUSH tmpBrush = SelectObject(hdcColorBlock, GetStockObject(NULL_BRUSH));
+            // Draw indicator rectangle border.
+            Rectangle(hdcColorBlock, rc.left, rc.top, rc.right, rc.bottom);
+            // Restore device context.
+            SelectObject(hdcColorBlock, tmpPen);
+            SelectObject(hdcColorBlock, tmpBrush);
+
+            return (LRESULT)brColorBlock;
+        }
+        // goto default window process
     }
     case WM_COMMAND:
     {
         switch (LOWORD(wParam))
         {
-        case IDM_FILE_NEW: // TODO: support create image.
+#define MY_SET_BTN_STATE(Btn_Handle, Btn_ID) \
+    SendMessage(Btn_Handle, BM_SETSTATE, (LOWORD(wParam) == Btn_ID) ? 1 : 0, 0)
+
+#define MY_POLLSET_BTN_STATES SetFocus(hwnd); \
+    MY_SET_BTN_STATE(btnMove, MAIN_MOVE_BTN); \
+    MY_SET_BTN_STATE(btnSelect, MAIN_SELECT_BTN); \
+    MY_SET_BTN_STATE(btnEyedropper, MAIN_EYEDROPPER_BTN); \
+    MY_SET_BTN_STATE(btnFill, MAIN_FILL_BTN); \
+    MY_SET_BTN_STATE(btnBrush, MAIN_BRUSH_BTN)
+
+        // Simulate radio button tool bar.
+        case MAIN_MOVE_BTN:
+            currOperation = btnMove;
+            goto update_tool_bar_state;
+            return 0;
+        case MAIN_SELECT_BTN:
+            currOperation = btnSelect;
+            goto update_tool_bar_state;
+            return 0;
+        case MAIN_CLIP_BTN:
         {
-            MessageBox(hwnd, L"抱歉, 我们暂时不支持新建图片文件!", L"提示", MB_OK | MB_ICONINFORMATION);
+            SetFocus(hwnd);
+            int tmpImgW = selectArea.right - selectArea.left;
+            int tmpImgH = selectArea.bottom - selectArea.top;
+            // Verified area found.
+            if (tmpImgW > 0 && tmpImgW <= gBmpInfo.nWidth &&
+                tmpImgH > 0 && tmpImgH <= gBmpInfo.nHeight)
+            {
+                MyBGRA* tmpImg = (MyBGRA*)malloc(tmpImgW * tmpImgH * sizeof(MyBGRA));
+                myAssert(tmpImg);
+                // Copy part area data from origin image.
+                for (int i = 0; i < tmpImgW; ++i)
+                    for (int j = 0; j < tmpImgH; ++j)
+                    {
+                        int srcIdx = (i + selectArea.left) + // Note image Y-axis is flipped.
+                            (gBmpInfo.nHeight - selectArea.top - tmpImgH + j) * gBmpInfo.nWidth;
+
+                        tmpImg[i + j * tmpImgW] = gImage[srcIdx];
+                    }
+                free(gImage);
+                // Replace origin image with clipped one.
+                gImage = tmpImg;
+                gBmpInfo.nWidth = tmpImgW;
+                gBmpInfo.nHeight = tmpImgH;
+
+                // Resize main window to suit clipped image.
+                if (!IsMaximized(hwnd))
+                {
+                    RECT rc = { 0, 0, gBmpInfo.nWidth + 36, gBmpInfo.nHeight + 41 + 2 * gCharHeight };
+                    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
+                    LONG tmpW = rc.right - rc.left, tmpH = rc.bottom - rc.top;
+                    GetWindowRect(hwnd, &rc);
+                    MoveWindow(hwnd, rc.left, rc.top, tmpW, tmpH, TRUE);
+                }
+                else SendMessage(hwnd, WM_SIZE, SIZE_MAXIMIZED, MAKELPARAM(gMaxClntWidth, gMaxClntHeight));
+
+                // There's no need to erase since double-buffer is enabled.
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+            return 0;
+        }
+        case MAIN_EYEDROPPER_BTN:
+            currOperation = btnEyedropper;
+            goto update_tool_bar_state;
+            return 0;
+        case MAIN_FILL_BTN:
+            currOperation = btnFill;
+            goto update_tool_bar_state;
+            return 0;
+        case MAIN_BRUSH_BTN:
+            currOperation = btnBrush;
+            // Notify show hint rect.
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(hwnd, NULL, FALSE);
+            goto update_tool_bar_state;
+            return 0;
+
+        update_tool_bar_state: MY_POLLSET_BTN_STATES; return 0;
+
+#undef MY_SET_BTN_STATE
+#undef MY_POLLSET_BTN_STATES
+
+        case MAIN_BRUSH_RADIUS_EDT:
+        {
+            WCHAR szRadiusParam[10];
+            GetWindowText(edtBrushRadius, szRadiusParam, 10);
+            int iUserInput = 1;
+            if (swscanf(szRadiusParam, L"%i", &iUserInput) == 1)
+                nBrushRadius = (UINT)iUserInput;
+            // Make sure brush radius is positive.
+            nBrushRadius = max(1, nBrushRadius);
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
+        case MAIN_COLOR_BLOCK_BTN:
+        {
+            // User selected color.
+            if (ChooseColor(&sChooseColor))
+            {
+                COLORREF color = sChooseColor.rgbResult;
+
+                // Update user selected color.
+                currColor.R = (color >>  0) & 0x0FF;
+                currColor.G = (color >>  8) & 0x0FF;
+                currColor.B = (color >> 16) & 0x0FF;
+
+                // Color block button's background will be updated in WM_CTLCOLORBTN.
+                DeleteObject(brColorBlock);
+                brColorBlock = CreateSolidBrush(color);
+                InvalidateRect(btnColorBlock, NULL, TRUE);
+            }
+            return 0;
+        }
+        case IDM_FILE_NEW_256x256:
+        case IDM_FILE_NEW_512x512:
+        case IDM_FILE_NEW_1024x1024:
+        {
+            gBmpInfo.nWidth = gBmpInfo.nHeight = (0x100 << (LOWORD(wParam) - IDM_FILE_NEW_256x256));
+            // Create image with specific size.
+            if (gImage != NULL) free(gImage);
+            size_t nByteSize = gBmpInfo.nWidth * gBmpInfo.nHeight * sizeof(MyBGRA);
+            gImage = (MyBGRA*)malloc(nByteSize);
+            myAssert(gImage);
+            // Initialized as pure black image.
+            ZeroMemory(gImage, nByteSize);
+
+            // Unlink current opened image file.
+            gHasExternalFile = FALSE;
+            SetWindowText(gMainWnd, L"Untitled - (未保存)");
+
+            // Resize main window to suit created image.
+            if (!IsMaximized(hwnd))
+            {
+                RECT rc = { 0, 0, gBmpInfo.nWidth + 36, gBmpInfo.nHeight + 41 + 2 * gCharHeight };
+                AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
+                LONG tmpW = rc.right - rc.left, tmpH = rc.bottom - rc.top;
+                GetWindowRect(hwnd, &rc);
+                MoveWindow(hwnd, rc.left, rc.top, tmpW, tmpH, TRUE);
+            }
+            else SendMessage(hwnd, WM_SIZE, SIZE_MAXIMIZED, MAKELPARAM(gMaxClntWidth, gMaxClntHeight));
+
+            // Have fun with operations.
+            myEnableOperationMenus();
+            DrawMenuBar(hwnd);
+
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
         case IDM_FILE_OPEN:
         {
+            static WCHAR tmpFileName[MAX_PATH] = L"\0";
+            static WCHAR tmpTitleName[MAX_PATH] = L"\0";
             // Show Open-File dialog.
-            if (myOpenFileDialog(hwnd, gFileName, gTitleName))
+            if (myOpenFileDialog(hwnd, tmpFileName, tmpTitleName))
             {
+                lstrcpyW(gFileName, tmpFileName);
+                lstrcpyW(gTitleName, tmpTitleName);
+
+                MyBmpInfo tmpInfo;
+                MyBGRA* tmpImg = myReadBmp(gFileName, &tmpInfo);
+                if (tmpImg == NULL)
+                {
+                    MessageBox(hwnd, L"无法导入该 BMP 图片, 可能文件已损坏.", L"警告", MB_OK | MB_ICONEXCLAMATION);
+                    return 0;
+                }
+
                 // Update main window caption.
-                SetWindowText(hwnd, gFileName); 
+                SetWindowText(hwnd, gFileName);
                 // Now the image has been connected with an external file.
                 gHasExternalFile = TRUE;
 
                 // Replace main window background with selected image.
                 if (gImage != NULL) free(gImage);
-                gImage = myReadBmp(gFileName, &gBmpInfo);
-                myAssert(gImage);
-                InvalidateRect(hwnd, NULL, TRUE);
+                if (gSpectral != NULL)
+                {
+                    free(gSpectral);
+                    gSpectral = NULL;
+                }
+                gImage = tmpImg;
+                gBmpInfo = tmpInfo;
 
                 // Resize main window to suit selected image.
-                RECT rc = { 0, 0, gBmpInfo.nWidth + 36, gBmpInfo.nHeight + 18 };
-                AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
-                MoveWindow(hwnd, left, top, rc.right - rc.left, rc.bottom - rc.top, TRUE);
+                if (!IsMaximized(hwnd))
+                {
+                    RECT rc = { 0, 0, gBmpInfo.nWidth + 36, gBmpInfo.nHeight + 41 + 2 * gCharHeight };
+                    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
+                    LONG tmpW = rc.right - rc.left, tmpH = rc.bottom - rc.top;
+                    GetWindowRect(hwnd, &rc);
+                    MoveWindow(hwnd, rc.left, rc.top, tmpW, tmpH, TRUE);
+                }
+                else SendMessage(hwnd, WM_SIZE, SIZE_MAXIMIZED, MAKELPARAM(gMaxClntWidth, gMaxClntHeight));
 
                 // Have fun with operations.
-                myEnableOperationMenus(myIsImageGrayScale(gImage, &gBmpInfo));
+                myEnableOperationMenus();
                 DrawMenuBar(hwnd);
+
+                // There's no need to erase since double-buffer is enabled.
+                InvalidateRect(hwnd, NULL, FALSE);
             }
+            // Always clear this to make sure the filename input line
+            // keeps empty when the user re-open the open file dialog.
+            tmpFileName[0] = L'\0';
+            tmpTitleName[0] = L'\0';
             return 0;
         }
         /*
@@ -835,6 +1901,67 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                 (LPVOID)LOWORD(wParam));
             return 0;
         }
+        case IDM_GRAY_2xBLACK:
+        {
+            if (gImage != NULL)
+            {
+                MyBGRA* tmpImg = myExpand2xBlackImage(gImage, &gBmpInfo);
+                myAssert(tmpImg);
+                free(gImage);
+                gImage = tmpImg;
+                goto after_2x_resized;
+            }
+            return 0;
+        }
+        case IDM_GRAY_2xMIRROR:
+        {
+            if (gImage != NULL)
+            {
+                MyBGRA* tmpImg = myExpand2xMirrorImage(gImage, &gBmpInfo);
+                myAssert(tmpImg);
+                free(gImage);
+                gImage = tmpImg;
+                goto after_2x_resized;
+            }
+            return 0;
+        }
+        case IDM_GRAY_2xCOPY:
+        {
+            if (gImage != NULL)
+            {
+                MyBGRA* tmpImg = myExpand2xCopyImage(gImage, &gBmpInfo);
+                myAssert(tmpImg);
+                free(gImage);
+                gImage = tmpImg;
+                goto after_2x_resized;
+            }
+            return 0;
+        }
+        after_2x_resized:
+        {
+            // Notify user to save change.
+            WCHAR title[MAX_PATH + 20];
+            wsprintf(title, L"%s - (未保存)", gHasExternalFile ? gFileName : L"Untitled");
+            SetWindowText(gMainWnd, title);
+
+            gBmpInfo.nWidth *= 2; gBmpInfo.nHeight *= 2;
+
+            // Resize main window to suit expanded image.
+            if (!IsMaximized(hwnd))
+            {
+                RECT rc = { 0, 0, gBmpInfo.nWidth + 36, gBmpInfo.nHeight + 41 + 2 * gCharHeight };
+                AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
+                LONG tmpW = rc.right - rc.left, tmpH = rc.bottom - rc.top;
+                GetWindowRect(hwnd, &rc);
+                MoveWindow(hwnd, rc.left, rc.top, tmpW, tmpH, TRUE);
+            }
+            else SendMessage(hwnd, WM_SIZE, SIZE_MAXIMIZED, MAKELPARAM(gMaxClntWidth, gMaxClntHeight));
+
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(hwnd, NULL, FALSE);
+
+            return 0;
+        }
         // space-domain
         case IDM_SPAF_BOX:
         case IDM_SPAF_GAUS:
@@ -844,7 +1971,22 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         // freq-domain
         case IDM_SPEF_POWER:
         case IDM_SPEF_PHASE:
+        case IDM_SPEF_POWER_FFT:
+        case IDM_SPEF_PHASE_FFT:
+        // transfer-func
+        case IDM_TFUNC_ILPF:
+        case IDM_TFUNC_GLPF:
+        case IDM_TFUNC_BLPF:
+        case IDM_TFUNC_IHPF:
+        case IDM_TFUNC_GHPF:
+        case IDM_TFUNC_BHPF:
+        case IDM_TFUNC_HOMO:
         {
+            if (LOWORD(wParam) >= IDM_TFUNC_ILPF && gSpectral == NULL)
+            {
+                MessageBox(hwnd, L"频谱为空, 无法调用传递函数.", L"提示", MB_OK | MB_ICONINFORMATION);
+                return 0;
+            }
             RECT rc = myGetSpafGeneWndInitSize();
             // Create window with quried size.
             gDomainFilterWnd = CreateWindow(
@@ -858,7 +2000,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                 gMainWnd,
                 NULL,
                 gInstance,
-                // Pass core-type to child window to create different widgets.
+                // Pass core/tfunc type to child window to create different widgets.
                 (LPVOID)LOWORD(wParam));
             return 0;
         }
@@ -902,15 +2044,16 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             {
                 SetWindowText(hwnd, L"可恶, 彩蛋被你找到了!");
 
-                UINT nExpandSize = min(gBmpInfo.nWidth, gBmpInfo.nHeight) / 2;
-                MyBGRA* tmpImage = myExpandMirrorImage(gImage, &gBmpInfo, nExpandSize);
+                UINT xExpandSize = gBmpInfo.nWidth / 2;
+                UINT yExpandSize = gBmpInfo.nHeight / 2;
+                MyBGRA* tmpImage = myExpandMirrorImage(gImage, &gBmpInfo, xExpandSize, yExpandSize);
                 myAssert(tmpImage);
 
                 // Destroy the precious image of evil user!
                 free(gImage);
                 gImage = tmpImage;
-                gBmpInfo.nWidth += 2 * nExpandSize;
-                gBmpInfo.nHeight += 2 * nExpandSize;
+                gBmpInfo.nWidth += 2 * xExpandSize;
+                gBmpInfo.nHeight += 2 * yExpandSize;
 
                 goto resize_and_repaint_main_window;
             }
@@ -920,15 +2063,15 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             {
                 SetWindowText(hwnd, L"邪恶的用户!");
 
-                MyBGRA* tmpImage = (MyBGRA*)malloc(65536 * sizeof(MyBGRA));
+                MyBGRA* tmpImage = (MyBGRA*)malloc(512 * 512 * sizeof(MyBGRA));
                 myAssert(tmpImage);
 
                 srand((unsigned int)time(NULL));
                 // Populate with random colors.
-                for (UINT i = 0; i < 256; ++i)
-                    for (UINT j = 0; j < 256; ++j)
+                for (UINT i = 0; i < 512; ++i)
+                    for (UINT j = 0; j < 512; ++j)
                     {
-                        UINT idx = i + j * 256;
+                        UINT idx = i + j * 512;
                         tmpImage[idx].R = rand() % 256;
                         tmpImage[idx].G = rand() % 256;
                         tmpImage[idx].B = rand() % 256;
@@ -938,8 +2081,8 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                 // Destroy the precious image of evil user!
                 free(gImage);
                 gImage = tmpImage;
-                gBmpInfo.nWidth = 256;
-                gBmpInfo.nHeight = 256;
+                gBmpInfo.nWidth = 512;
+                gBmpInfo.nHeight = 512;
 
                 goto resize_and_repaint_main_window;
             }
@@ -953,15 +2096,26 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             }
             return 0;
 
-        resize_and_repaint_main_window:
-            // Update main menu.
-            myEnableOperationMenus(myIsImageGrayScale(gImage, &gBmpInfo));
-            DrawMenuBar(hwnd);
-            // Resize main window to suit generated image.
-            RECT rc = { 0, 0, gBmpInfo.nWidth + 36, gBmpInfo.nHeight + 18 };
-            AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
-            MoveWindow(hwnd, left, top, rc.right - rc.left, rc.bottom - rc.top, TRUE);
-            InvalidateRect(hwnd, NULL, TRUE);
+            resize_and_repaint_main_window:
+            {
+                // Update main menu.
+                myEnableOperationMenus();
+                DrawMenuBar(hwnd);
+
+                // Resize main window to suit generated image.
+                if (!IsMaximized(hwnd))
+                {
+                    RECT rc = { 0, 0, gBmpInfo.nWidth + 36, gBmpInfo.nHeight + 41 + 2 * gCharHeight };
+                    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
+                    UINT tmpClntW = rc.right - rc.left, tmpClntH = rc.bottom - rc.top;
+                    GetWindowRect(hwnd, &rc);
+                    MoveWindow(hwnd, rc.left, rc.top, tmpClntW, tmpClntH, TRUE);
+                }
+                else SendMessage(hwnd, WM_SIZE, SIZE_MAXIMIZED, MAKELPARAM(gMaxClntWidth, gMaxClntHeight));
+
+                // There's no need to erase since double-buffer is enabled.
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
             return 0;
         }
         case IDM_APP_ABOUT:
@@ -981,13 +2135,25 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                 NULL);
             return 0;
         }
+        case IDM_WEB_HOME:
+        {
+#define MY_WEB_HOME L"https://github.com/yiyaowen/BitmapViewer/wiki/使用手册"
+            // Open web explorer to project home page.
+            ShellExecute(hwnd, NULL, L"microsoft-edge:" MY_WEB_HOME, NULL, NULL, SW_SHOW);
+#undef MY_WEB_HOME
+            return 0;
+        }
         default:
             return 0;
         }
     }
     case WM_DESTROY:
+        // Note we have create these custom pens & brushes.
+        DeleteObject(slctDashPen);
+        DeleteObject(brColorBlock);
+        // Note we have allocated memory for these buffers.
+        if (gSpectral != NULL) free(gSpectral);
         if (gImage != NULL) free(gImage);
-        gImage = NULL; // A good habit.
         PostQuitMessage(0);
         return 0;
     }
@@ -1027,6 +2193,12 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
 #define SUBW_EXP_TRANS_GAMMA_LBL 10014
 #define SUBW_EXP_TRANS_GAMMA_EDT 10015
 #define SUBW_EXP_TRANS_EXECU_BTN 10016
+// spectrum reconstruction
+#define SUBW_SPE_RECON_LBL 10017
+#define SUBW_SPE_RECON_MAIN_POWER_SUB_PHASE_BTN 10018
+#define SUBW_SPE_RECON_MAIN_PHASE_SUB_POWER_BTN 10019
+#define SUBW_SPE_RECON_MAIN_POWER_SUB_PHASE_FFT_BTN 10020
+#define SUBW_SPE_RECON_MAIN_PHASE_SUB_POWER_FFT_BTN 10021
 
 LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -1038,6 +2210,7 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
 
     static MyBGRA* image = NULL;
     static MyBmpInfo bmpInfo;
+    static MyComplex* spectral = NULL;
 
     // Bottom panel buttons.
     static HWND btnMainToSub;
@@ -1068,6 +2241,13 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
     static double dExpGamma = 2;
     static HWND btnExpExecu;
 
+    // spectrum reconstruction
+    static HWND lblSpeRecon;
+    static HWND btnSpeReconMainPowerSubPhase;
+    static HWND btnSpeReconMainPhaseSubPower;
+    static HWND btnSpeReconMainPowerSubPhaseFFT;
+    static HWND btnSpeReconMainPhaseSubPowerFFT;
+
     static LONG yMostBottom;
     
     switch (message)
@@ -1084,11 +2264,19 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         // Copy image data from main window.
         else
         {
-            size_t nPixelByteSize = gBmpInfo.nWidth * gBmpInfo.nHeight * sizeof(MyBGRA);
-            image = (MyBGRA*)malloc(nPixelByteSize);
+            size_t nPixelCount = gBmpInfo.nWidth * gBmpInfo.nHeight;
+            image = (MyBGRA*)malloc(nPixelCount * sizeof(MyBGRA));
             myAssert(image);
             bmpInfo = gBmpInfo;
-            memcpy(image, gImage, nPixelByteSize);
+            memcpy(image, gImage, nPixelCount * sizeof(MyBGRA));
+
+            // Copy spectral data by the way (if has).
+            if (gSpectral != NULL)
+            {
+                spectral = (MyComplex*)malloc(nPixelCount * sizeof(MyComplex));
+                myAssert(spectral);
+                memcpy(spectral, gSpectral, nPixelCount * sizeof(MyComplex));
+            }
         }
 
         // Create button widgets.
@@ -1105,7 +2293,7 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             L"button",
             L"主-->副",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            12,
+            24 + 16 * gCharWidth,
             tmpVert,
             tmpBtnW,
             tmpBtnH,
@@ -1114,7 +2302,7 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             gInstance,
             NULL);
 
-        int tmpLastHorz = 12 + tmpBtnW + 5;
+        int tmpLastHorz = 24 + 16 * gCharWidth + tmpBtnW + 5;
         // Create sub-to-main button.
         btnSubToMain = CreateWindow(
             L"button",
@@ -1150,7 +2338,7 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             L"button", \
             Btn_Text, \
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, \
-            bmpInfo.nWidth + 24, \
+            12, \
             5 + Btn_Idx * (tmpBtnH + 10), \
             16 * gCharWidth, \
             tmpBtnH, \
@@ -1178,8 +2366,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             L"static",
             L"clog(1+r), c",
             WS_CHILD | WS_VISIBLE | SS_CENTER,
-            bmpInfo.nWidth + 24,
-            10 + 7 * (tmpBtnH + 10),
+            36 + bmpInfo.nWidth + 16 * gCharWidth,
+            5,
             10 * gCharWidth,
             gCharHeight,
             hwnd,
@@ -1190,8 +2378,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             L"edit",
             L"1",
             WS_CHILD | WS_VISIBLE,
-            bmpInfo.nWidth + 24 + 12 * gCharWidth,
-            10 + 7 * (tmpBtnH + 10),
+            36 + bmpInfo.nWidth + 28 * gCharWidth,
+            5,
             4 * gCharWidth,
             gCharHeight,
             hwnd,
@@ -1202,8 +2390,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             L"button",
             L"对数变换",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            bmpInfo.nWidth + 24,
-            10 + 7 * (tmpBtnH + 10) + gCharHeight + 10,
+            36 + bmpInfo.nWidth + 16 * gCharWidth,
+            10 + gCharHeight,
             16 * gCharWidth,
             tmpBtnH,
             hwnd,
@@ -1216,8 +2404,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             L"static",
             L"gamma",
             WS_CHILD | WS_VISIBLE | SS_CENTER,
-            bmpInfo.nWidth + 24,
-            10 + 7 * (tmpBtnH + 10) + 3 * gCharHeight + 20,
+            36 + bmpInfo.nWidth + 16 * gCharWidth,
+            20 + 3 * gCharHeight,
             10 * gCharWidth,
             gCharHeight,
             hwnd,
@@ -1228,8 +2416,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             L"edit",
             L"2",
             WS_CHILD | WS_VISIBLE,
-            bmpInfo.nWidth + 24 + 12 * gCharWidth,
-            10 + 7 * (tmpBtnH + 10) + 3 * gCharHeight + 20,
+            36 + bmpInfo.nWidth + 28 * gCharWidth,
+            20 + 3 * gCharHeight,
             4 * gCharWidth,
             gCharHeight,
             hwnd,
@@ -1240,8 +2428,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             L"button",
             L"伽马变换",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            bmpInfo.nWidth + 24,
-            10 + 7 * (tmpBtnH + 10) + 4 * gCharHeight + 30,
+            36 + bmpInfo.nWidth + 16 * gCharWidth,
+            25 + 4 * gCharHeight,
             16 * gCharWidth,
             tmpBtnH,
             hwnd,
@@ -1249,10 +2437,74 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             gInstance,
             NULL);
 
-        yMostBottom = 10 + 7 * (tmpBtnH + 10) + 4 * gCharHeight + 30 + tmpBtnH + 5;
+        // Create spectrum reconstruction text label & buttons.
+        lblSpeRecon = CreateWindow(
+            L"static",
+            L"从频谱重建图像",
+            WS_CHILD | WS_VISIBLE | SS_CENTER,
+            36 + bmpInfo.nWidth + 16 * gCharWidth,
+            35 + 6 * gCharHeight,
+            16 * gCharWidth,
+            gCharHeight + 4,
+            hwnd,
+            (HMENU)SUBW_SPE_RECON_LBL,
+            gInstance,
+            NULL);
+        btnSpeReconMainPowerSubPhase = CreateWindow(
+            L"button",
+            L"主功率 副相位",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            36 + bmpInfo.nWidth + 16 * gCharWidth,
+            44 + 7 * gCharHeight,
+            16 * gCharWidth,
+            tmpBtnH,
+            hwnd,
+            (HMENU)SUBW_SPE_RECON_MAIN_POWER_SUB_PHASE_BTN,
+            gInstance,
+            NULL);
+        btnSpeReconMainPhaseSubPower = CreateWindow(
+            L"button",
+            L"主相位 副功率",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            36 + bmpInfo.nWidth + 16 * gCharWidth,
+            49 + 9 * gCharHeight,
+            16 * gCharWidth,
+            tmpBtnH,
+            hwnd,
+            (HMENU)SUBW_SPE_RECON_MAIN_PHASE_SUB_POWER_BTN,
+            gInstance,
+            NULL);
+        btnSpeReconMainPowerSubPhaseFFT = CreateWindow(
+            L"button",
+            L"主功率 副相位 FFT",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            36 + bmpInfo.nWidth + 16 * gCharWidth,
+            54 + 11 * gCharHeight,
+            16 * gCharWidth,
+            tmpBtnH,
+            hwnd,
+            (HMENU)SUBW_SPE_RECON_MAIN_POWER_SUB_PHASE_FFT_BTN,
+            gInstance,
+            NULL);
+        btnSpeReconMainPhaseSubPowerFFT = CreateWindow(
+            L"button",
+            L"主相位 副功率 FFT",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            36 + bmpInfo.nWidth + 16 * gCharWidth,
+            59 + 13 * gCharHeight,
+            16 * gCharWidth,
+            tmpBtnH,
+            hwnd,
+            (HMENU)SUBW_SPE_RECON_MAIN_PHASE_SUB_POWER_FFT_BTN,
+            gInstance,
+            NULL);
+
+        yMostBottom = max(70 + 14 * gCharHeight, // left panel
+                          64 + 15 * gCharHeight); // right panel
+
         // Suit window to display all widgets.
         RECT tmpRC = { 0, 0,
-            ((gImage == NULL) ? 256 : gBmpInfo.nWidth) + 36 + 16 * gCharWidth,
+            ((gImage == NULL) ? 256 : gBmpInfo.nWidth) + 48 + 32 * gCharWidth,
             ((gImage == NULL) ? 256 : gBmpInfo.nHeight) + 2 * gCharHeight + 12 };
         // Compare origin height with suited height.
         tmpRC.bottom = max(yMostBottom, tmpRC.bottom);
@@ -1281,59 +2533,46 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                    clntHeight - 6 - 2 * gCharHeight, \
                    rc.right - rc.left, rc.bottom - rc.top, TRUE)
 
-        MY_STICK_BOTTOM_BTN(btnMainToSub, 12);
-        MY_STICK_BOTTOM_BTN(btnSubToMain, 17 + 10 * gCharWidth);
-        MY_STICK_BOTTOM_BTN(btnImportImage, 22 + 20 * gCharWidth);
+        MY_STICK_BOTTOM_BTN(btnMainToSub, 24 + 16 * gCharWidth);
+        MY_STICK_BOTTOM_BTN(btnSubToMain, 29 + 26 * gCharWidth);
+        MY_STICK_BOTTOM_BTN(btnImportImage, 34 + 36 * gCharWidth);
 
 #undef MY_STICK_BOTTOM_BTN
 
-        // Keep those buttons attached to window right.
-#define MY_STICK_BUTTON_RIGHT(Btn_Handle, Btn_Idx) \
-        GetWindowRect(Btn_Handle, &rc); \
-        MoveWindow(Btn_Handle, clntWidth - 12 - 16 * gCharWidth, \
-                   5 + Btn_Idx * (10 + 2 * gCharHeight), \
+        // Keep those widgets attached to window right.
+#define MY_STICK_RIGHT_LBL(Lbl_Handle, Lbl_Offset_Y) \
+        GetWindowRect(Lbl_Handle, &rc); \
+        MoveWindow(Lbl_Handle, \
+                   clntWidth - 12 - 16 * gCharWidth, \
+                   Lbl_Offset_Y, \
                    rc.right - rc.left, rc.bottom - rc.top, TRUE)
 
-        MY_STICK_BUTTON_RIGHT(btnInvertPixel, 0);
+#define MY_STICK_RIGHT_BTN MY_STICK_RIGHT_LBL
 
-        MY_STICK_BUTTON_RIGHT(btnMainAddSub, 1);
+#define MY_STICK_RIGHT_EDT(Edt_Handle, Edt_Offset_Y) \
+        GetWindowRect(Edt_Handle, &rc); \
+        MoveWindow(Edt_Handle, \
+                   clntWidth - 12 - 4 * gCharWidth, \
+                   Edt_Offset_Y, \
+                   rc.right - rc.left, rc.bottom - rc.top, TRUE)
 
-        MY_STICK_BUTTON_RIGHT(btnMainSubSub, 2);
-        MY_STICK_BUTTON_RIGHT(btnSubSubMain, 3);
+        MY_STICK_RIGHT_LBL(lblLogParam, 5);
+        MY_STICK_RIGHT_EDT(edtLogParam, 5);
+        MY_STICK_RIGHT_BTN(btnLogExecu, 10 + gCharHeight);
 
-        MY_STICK_BUTTON_RIGHT(btnMainMulSub, 4);
+        MY_STICK_RIGHT_LBL(lblExpGamma, 20 + 3 * gCharHeight);
+        MY_STICK_RIGHT_EDT(edtExpGamma, 20 + 3 * gCharHeight);
+        MY_STICK_RIGHT_BTN(btnExpExecu, 25 + 4 * gCharHeight);
 
-        MY_STICK_BUTTON_RIGHT(btnMainDivSub, 5);
-        MY_STICK_BUTTON_RIGHT(btnSubDivMain, 6);
+        MY_STICK_RIGHT_LBL(lblSpeRecon, 35 + 6 * gCharHeight);
+        MY_STICK_RIGHT_BTN(btnSpeReconMainPowerSubPhase, 44 + 7 * gCharHeight);
+        MY_STICK_RIGHT_BTN(btnSpeReconMainPhaseSubPower, 49 + 9 * gCharHeight);
+        MY_STICK_RIGHT_BTN(btnSpeReconMainPowerSubPhaseFFT, 54 + 11 * gCharHeight);
+        MY_STICK_RIGHT_BTN(btnSpeReconMainPhaseSubPowerFFT, 59 + 13 * gCharHeight);
 
-#undef MY_STICK_BUTTON_RIGHT
-
-        // Keep log, exp widgets stick attached to window right.
-        GetWindowRect(lblLogParam, &rc);
-        MoveWindow(lblLogParam, clntWidth - 12 - 16 * gCharWidth,
-                   10 + 7 * (10 + 2 * gCharHeight),
-                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
-        GetWindowRect(edtLogParam, &rc);
-        MoveWindow(edtLogParam, clntWidth - 12 - 4 * gCharWidth,
-                   10 + 7 * (10 + 2 * gCharHeight),
-                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
-        GetWindowRect(btnLogExecu, &rc);
-        MoveWindow(btnLogExecu, clntWidth - 12 - 16 * gCharWidth,
-                   10 + 7 * (10 + 2 * gCharHeight) + gCharHeight + 10,
-                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
-
-        GetWindowRect(lblExpGamma, &rc);
-        MoveWindow(lblExpGamma, clntWidth - 12 - 16 * gCharWidth,
-                   10 + 7 * (10 + 2 * gCharHeight) + 3 * gCharHeight + 20,
-                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
-        GetWindowRect(edtExpGamma, &rc);
-        MoveWindow(edtExpGamma, clntWidth - 12 - 4 * gCharWidth,
-                   10 + 7 * (10 + 2 * gCharHeight) + 3 * gCharHeight + 20,
-                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
-        GetWindowRect(btnExpExecu, &rc);
-        MoveWindow(btnExpExecu, clntWidth - 12 - 16 * gCharWidth,
-                   10 + 7 * (10 + 2 * gCharHeight) + 4 * gCharHeight + 30,
-                   rc.right - rc.left, rc.bottom - rc.top, TRUE);
+#undef MY_STICK_RIGHT_EDT
+#undef MY_STICK_RIGHT_BTN
+#undef MY_STICK_RIGHT_LBL
 
         width = LOWORD(lParam);
         height = HIWORD(lParam);
@@ -1342,7 +2581,7 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
     case WM_PAINT:
         hdc = BeginPaint(hwnd, &ps);
 
-        myDisplayImage(hdc, 12, 0, image, &bmpInfo);
+        myDisplayImage(hdc, 24 + 16 * gCharWidth, 0, bmpInfo.nWidth, bmpInfo.nHeight, 0, 0, image, &bmpInfo);
 
         EndPaint(hwnd, &ps);
         return 0;
@@ -1365,17 +2604,26 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 return 0;
             }
 
-            // Sub-image must not be time at this point.
+            // Sub-image must not be empty at this point.
             free(image);
-            size_t nPixelByteSize = gBmpInfo.nWidth * gBmpInfo.nHeight * sizeof(MyBGRA);
-            image = (MyBGRA*)malloc(nPixelByteSize);
+            size_t nPixelCount = gBmpInfo.nWidth * gBmpInfo.nHeight;
+            image = (MyBGRA*)malloc(nPixelCount * sizeof(MyBGRA));
             myAssert(image);
             bmpInfo = gBmpInfo;
-            memcpy(image, gImage, nPixelByteSize);
+            memcpy(image, gImage, nPixelCount * sizeof(MyBGRA));
+
+            // Copy spectral data by the way (if has).
+            if (gSpectral != NULL)
+            {
+                if (spectral != NULL) free(spectral);
+                spectral = (MyComplex*)malloc(nPixelCount * sizeof(MyComplex));
+                myAssert(spectral);
+                memcpy(spectral, gSpectral, nPixelCount * sizeof(MyComplex));
+            }
 
             // Resize to suit copyed image.
             RECT tmpRC = { 0, 0,
-                bmpInfo.nWidth + 36 + 16 * gCharWidth,
+                bmpInfo.nWidth + 48 + 32 * gCharWidth,
                 bmpInfo.nHeight + 2 * gCharHeight + 12 };
             // Compare origin height with suited height.
             tmpRC.bottom = max(yMostBottom, tmpRC.bottom);
@@ -1395,21 +2643,34 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 return 0;
             }
 
-            // Main-image might be time at this point.
+            // Main-image might be empty at this point.
             if (gImage != NULL) free(gImage);
-            size_t nPixelByteSize = bmpInfo.nWidth * bmpInfo.nHeight * sizeof(MyBGRA);
-            gImage = (MyBGRA*)malloc(nPixelByteSize);
+            size_t nPixelCount = bmpInfo.nWidth * bmpInfo.nHeight;
+            gImage = (MyBGRA*)malloc(nPixelCount * sizeof(MyBGRA));
             myAssert(gImage);
             gBmpInfo = bmpInfo;
-            memcpy(gImage, image, nPixelByteSize);
+            memcpy(gImage, image, nPixelCount * sizeof(MyBGRA));
+
+            // Copy spectral data by the way (if has).
+            if (spectral != NULL)
+            {
+                if (gSpectral != NULL) free(gSpectral);
+                gSpectral = (MyComplex*)malloc(nPixelCount * sizeof(MyComplex));
+                myAssert(gSpectral);
+                memcpy(gSpectral, spectral, nPixelCount * sizeof(MyComplex));
+            }
 
             // Resize main window to suit copyed image.
-            RECT rc = { 0, 0, gBmpInfo.nWidth + 36, gBmpInfo.nHeight + 18 };
-            AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
-            int tmpW = rc.right - rc.left;
-            int tmpH = rc.bottom - rc.top;
-            GetWindowRect(gMainWnd, &rc);
-            MoveWindow(gMainWnd, rc.left, rc.top, tmpW, tmpH, TRUE);
+            if (!IsMaximized(gMainWnd))
+            {
+                RECT rc = { 0, 0, gBmpInfo.nWidth + 36, gBmpInfo.nHeight + 41 + 2 * gCharHeight };
+                AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
+                int tmpW = rc.right - rc.left;
+                int tmpH = rc.bottom - rc.top;
+                GetWindowRect(gMainWnd, &rc);
+                MoveWindow(gMainWnd, rc.left, rc.top, tmpW, tmpH, TRUE);
+            }
+            else SendMessage(gMainWnd, WM_SIZE, SIZE_MAXIMIZED, MAKELPARAM(gMaxClntWidth, gMaxClntHeight));
 
             // Notify user to save change.
             WCHAR title[MAX_PATH + 20];
@@ -1417,11 +2678,12 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             SetWindowText(gMainWnd, title);
 
             // Update operation menu state.
-            myEnableOperationMenus(TRUE);
+            myEnableOperationMenus();
             DrawMenuBar(gMainWnd);
 
             // Repaint main window image.
-            InvalidateRect(gMainWnd, NULL, TRUE);
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(gMainWnd, NULL, FALSE);
             return 0;
         }
         case SUBW_IMPORT_IMAGE_BTN: // import image
@@ -1434,7 +2696,11 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             {
                 // Check whether is grayscale.
                 MyBGRA* tmpImage = myReadBmp(tmpFileName, &tmpInfo);
-                myAssert(tmpImage);
+                if (tmpImage == NULL)
+                {
+                    MessageBox(hwnd, L"无法导入该 BMP 图片, 可能文件已损坏.", L"警告", MB_OK | MB_ICONEXCLAMATION);
+                    return 0;
+                }
                 if (!myIsImageGrayScale(tmpImage, &tmpInfo))
                 {
                     MessageBox(gMainWnd, L"只允许在第二窗口中使用灰度图像.", L"提示", MB_OK | MB_ICONINFORMATION);
@@ -1447,10 +2713,12 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 if (image != NULL) free(image);
                 image = tmpImage;
                 bmpInfo = tmpInfo;
+                // Release spectral data (if has).
+                if (spectral != NULL) { free(spectral); spectral = NULL; }
 
                 // Resize to suit selected image.
                 RECT tmpRC = { 0, 0,
-                    bmpInfo.nWidth + 36 + 16 * gCharWidth,
+                    bmpInfo.nWidth + 48 + 32 * gCharWidth,
                     bmpInfo.nHeight + 2 * gCharHeight + 12 };
                 // Compare origin height with suited height.
                 tmpRC.bottom = max(yMostBottom, tmpRC.bottom);
@@ -1471,6 +2739,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                     image[idx].R = image[idx].G = image[idx].B = (255 - image[idx].R);
                 }
             InvalidateRect(hwnd, NULL, TRUE);
+            // Release spectral data (if has).
+            if (spectral != NULL) { free(spectral); spectral = NULL; }
             return 0;
         }
 
@@ -1516,6 +2786,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 }
 
             MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            // Release spectral data (if has).
+            if (spectral != NULL) { free(spectral); spectral = NULL; }
             return 0;
         }
         case SUBW_MAIN_SUB_SUB_BTN: // main - sub
@@ -1535,6 +2807,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 }
 
             MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            // Release spectral data (if has).
+            if (spectral != NULL) { free(spectral); spectral = NULL; }
             return 0;
         }
         case SUBW_SUB_SUB_MAIN_BTN: // sub - main
@@ -1554,6 +2828,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 }
 
             MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            // Release spectral data (if has).
+            if (spectral != NULL) { free(spectral); spectral = NULL; }
             return 0;
         }
         case SUBW_MAIN_MUL_SUB_BTN: // main * sub
@@ -1573,6 +2849,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 }
 
             MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            // Release spectral data (if has).
+            if (spectral != NULL) { free(spectral); spectral = NULL; }
             return 0;
         }
         case SUBW_MAIN_DIV_SUB_BTN: // main / sub
@@ -1593,6 +2871,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 }
 
             MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            // Release spectral data (if has).
+            if (spectral != NULL) { free(spectral); spectral = NULL; }
             return 0;
         }
         case SUBW_SUB_DIV_MAIN_BTN: // sub / main
@@ -1613,6 +2893,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 }
 
             MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            // Release spectral data (if has).
+            if (spectral != NULL) { free(spectral); spectral = NULL; }
             return 0;
         }
 
@@ -1634,6 +2916,8 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         {
             myLogarithmTrans(image, &bmpInfo, dLogParam);
             InvalidateRect(hwnd, NULL, TRUE);
+            // Release spectral data (if has).
+            if (spectral != NULL) { free(spectral); spectral = NULL; }
             return 0;
         }
         case SUBW_EXP_TRANS_GAMMA_EDT:
@@ -1651,11 +2935,118 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         {
             myExpGammaTrans(image, &bmpInfo, dExpGamma);
             InvalidateRect(hwnd, NULL, TRUE);
+            // Release spectral data (if has).
+            if (spectral != NULL) { free(spectral); spectral = NULL; }
+            return 0;
+        }
+        case SUBW_SPE_RECON_MAIN_POWER_SUB_PHASE_BTN:
+        {
+            if (gImage == NULL) goto main_window_empty;
+            if (gBmpInfo.nWidth != bmpInfo.nWidth ||
+                gBmpInfo.nHeight != bmpInfo.nHeight)
+                goto main_sub_size_not_matched;
+            if (spectral == NULL || gSpectral == NULL) goto empty_spectral;
+            // main: power, sub: phase
+            mySpectralReconstruct(image, &bmpInfo, gSpectral, spectral);
+            // Clear origin spectral info.
+            free(spectral);
+            spectral = NULL;
+            InvalidateRect(hwnd, NULL, TRUE);
+            return 0;
+        }
+        case SUBW_SPE_RECON_MAIN_PHASE_SUB_POWER_BTN:
+        {
+            if (gImage == NULL) goto main_window_empty;
+            if (gBmpInfo.nWidth != bmpInfo.nWidth ||
+                gBmpInfo.nHeight != bmpInfo.nHeight)
+                goto main_sub_size_not_matched;
+            if (spectral == NULL || gSpectral == NULL) goto empty_spectral;
+            // main: phase, sub: power
+            mySpectralReconstruct(image, &bmpInfo, spectral, gSpectral);
+            // Clear origin spectral info.
+            free(spectral);
+            spectral = NULL;
+            InvalidateRect(hwnd, NULL, TRUE);
+            return 0;
+        }
+        case SUBW_SPE_RECON_MAIN_POWER_SUB_PHASE_FFT_BTN:
+        {
+            if (gImage == NULL) goto main_window_empty;
+            if (gBmpInfo.nWidth != bmpInfo.nWidth ||
+                gBmpInfo.nHeight != bmpInfo.nHeight)
+                goto main_sub_size_not_matched;
+            if (spectral == NULL || gSpectral == NULL) goto empty_spectral;
+
+            // Padding zeros for non-radix-2 FFT.
+            UINT RM = myGetRadix2(bmpInfo.nWidth);
+            UINT RN = myGetRadix2(bmpInfo.nHeight);
+            MyBmpInfo tmpInfo;
+            MyBGRA* tmpImg = myPaddingZeroImageFFT(&tmpInfo, image, &bmpInfo);
+            MyComplex* tmpPower = myPaddingZeroSpectralFFT(gSpectral, &bmpInfo);
+            MyComplex* tmpPhase = myPaddingZeroSpectralFFT(spectral, &bmpInfo);
+
+            // main: power, sub: phase
+            mySpectralReconstructFFT(tmpImg, &tmpInfo, RM, RN, tmpPower, tmpPhase);
+
+            // Copy from padding buffers.
+            for (UINT i = 0; i < bmpInfo.nWidth; ++i)
+                for (UINT j = 0; j < bmpInfo.nHeight; ++j)
+                {
+                    UINT dstIdx = i + j * bmpInfo.nWidth;
+                    UINT srcIdx = i + j * tmpInfo.nWidth;
+                    image[dstIdx] = tmpImg[srcIdx];
+                }
+            free(tmpImg); free(tmpPower); free(tmpPhase);
+
+            // Clear origin spectral info.
+            free(spectral);
+            spectral = NULL;
+
+            InvalidateRect(hwnd, NULL, TRUE);
+            return 0;
+        }
+        case SUBW_SPE_RECON_MAIN_PHASE_SUB_POWER_FFT_BTN:
+        {
+            if (gImage == NULL) goto main_window_empty;
+            if (gBmpInfo.nWidth != bmpInfo.nWidth ||
+                gBmpInfo.nHeight != bmpInfo.nHeight)
+                goto main_sub_size_not_matched;
+            if (spectral == NULL || gSpectral == NULL) goto empty_spectral;
+
+            // Padding zeros for non-radix-2 FFT.
+            UINT RM = myGetRadix2(bmpInfo.nWidth);
+            UINT RN = myGetRadix2(bmpInfo.nHeight);
+            MyBmpInfo tmpInfo;
+            MyBGRA* tmpImg = myPaddingZeroImageFFT(&tmpInfo, image, &bmpInfo);
+            MyComplex* tmpPower = myPaddingZeroSpectralFFT(spectral, &bmpInfo);
+            MyComplex* tmpPhase = myPaddingZeroSpectralFFT(gSpectral, &bmpInfo);
+
+            // main: phase, sub: power
+            mySpectralReconstructFFT(tmpImg, &tmpInfo, RM, RN, tmpPower, tmpPhase);
+
+            // Copy from padding buffers.
+            for (UINT i = 0; i < bmpInfo.nWidth; ++i)
+                for (UINT j = 0; j < bmpInfo.nHeight; ++j)
+                {
+                    UINT dstIdx = i + j * bmpInfo.nWidth;
+                    UINT srcIdx = i + j * tmpInfo.nWidth;
+                    image[dstIdx] = tmpImg[srcIdx];
+                }
+            free(tmpImg); free(tmpPower); free(tmpPhase);
+
+            // Clear origin spectral info.
+            free(spectral);
+            spectral = NULL;
+
+            InvalidateRect(hwnd, NULL, TRUE);
             return 0;
         }
         default:
             return 0;
         }
+    empty_spectral:
+        MessageBox(hwnd, L"频谱为空, 无法进行操作.", L"提示", MB_OK | MB_ICONINFORMATION);
+        return 0;
     main_window_empty:
         MessageBox(hwnd, L"主窗口为空, 无法进行操作.", L"提示", MB_OK | MB_ICONINFORMATION);
         return 0;
@@ -1664,9 +3055,11 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         return 0;
     }
     case WM_DESTROY:
+        // Release allocated spectral data (if has).
+        if (spectral != NULL) { free(spectral); spectral = NULL; }
         // Note we have allocated memory for image data.
         free(image);
-        // Keep focus on main window.
+        // Move focus to main window in case of accident hide.
         SetFocus(gMainWnd);
         return 0;
     }
@@ -1946,7 +3339,7 @@ LRESULT CALLBACK GrayTransWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
     case WM_PAINT:
         hdc = BeginPaint(hwnd, &ps);
 
-        myDisplayImage(hdc, 12, 0, image, &gBmpInfo);
+        myDisplayImage(hdc, 12, 0, gBmpInfo.nWidth, gBmpInfo.nHeight, 0, 0, image, &gBmpInfo);
 
         EndPaint(hwnd, &ps);
         return 0;
@@ -2046,7 +3439,7 @@ LRESULT CALLBACK GrayTransWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
             SetWindowText(gMainWnd, title);
 
             // Update operation menu state.
-            myEnableOperationMenus(TRUE);
+            myEnableOperationMenus();
             EnableMenuItem(gMenu, IDM_GRAY, MF_GRAYED | MF_BYPOSITION);
             DrawMenuBar(gMainWnd);
 
@@ -2490,6 +3883,8 @@ LRESULT CALLBACK GtwHistDispWndProc(HWND hwnd, UINT message, WPARAM wParam, LPAR
         bShowPaints = TRUE;
         // Notify parent window to resume show-histogram button.
         SendMessage(gGrayTransWnd, WM_COMMAND, GTW_ON_HIST_DISP_WND_CLOSED, 0);
+        // Move focus to parent window in case of accident hide.
+        SetFocus(gGrayTransWnd);
         return 0;
     }
     return DefWindowProc(hwnd, message, wParam, lParam);
@@ -2508,10 +3903,10 @@ LRESULT CALLBACK GtwHistDispWndProc(HWND hwnd, UINT message, WPARAM wParam, LPAR
 #define DOMAIN_GENE_APPLY_BTN 10301
 #define DOMAIN_GENE_SAVE_MAIN_BTN 10302
 #define DOMAIN_GENE_BORDER_MODE_BTN 10303
-// Label range: 10310 ~ 10319
+// Label range: 10310 ~ 10329
 #define DOMAIN_GENE_PARAM_LBL 10310
-// Edit line range: 10320 ~ 10329
-#define DOMAIN_GENE_PARAM_EDT 10320
+// Edit line range: 10330 ~ 10349
+#define DOMAIN_GENE_PARAM_EDT 10330
 
 /*
 * A parameter widget line is a group of text label and edit line.
@@ -2531,7 +3926,7 @@ void myCreateParamWidgets(HWND hwnd, int nParamCount, int xLeftPos, HWND lblPara
             L"static",
             NULL,
             WS_CHILD | WS_VISIBLE | SS_CENTER,
-            xLeftPos + gCharWidth,
+            xLeftPos,
             yVertPos,
             14 * gCharWidth,
             2 * gCharHeight,
@@ -2546,7 +3941,7 @@ void myCreateParamWidgets(HWND hwnd, int nParamCount, int xLeftPos, HWND lblPara
             WS_CHILD | WS_VISIBLE,
             xLeftPos + 15 * gCharWidth,
             yVertPos,
-            5 * gCharWidth,
+            10 * gCharWidth,
             2 * gCharHeight,
             hwnd,
             (HMENU)(DOMAIN_GENE_PARAM_EDT + i),
@@ -2574,6 +3969,50 @@ void myMoveParamWidgets(int nParamCount, int xLeftPos, HWND lblParam[10], HWND e
     }
 }
 
+// Customize cursor for different transfer functions.
+void myDrawTransferFuncCursor(HDC hdc, UINT filterType, int iParamVal[20], double dParamVal[20],
+                              int xParamVal[20], int yParamVal[20], POINT* markPos, int markIdx)
+{
+    switch (filterType)
+    {
+    case IDM_TFUNC_ILPF:
+    case IDM_TFUNC_BLPF:
+    case IDM_TFUNC_IHPF:
+    case IDM_TFUNC_BHPF:
+    case IDM_TFUNC_HOMO:
+    {
+        int tmpR = (int)dParamVal[2 * markIdx + 1];
+        // circle
+        Ellipse(hdc, markPos->x - tmpR, markPos->y - tmpR, markPos->x + tmpR, markPos->y + tmpR);
+        // horz cross
+        MoveToEx(hdc, markPos->x - (tmpR + 5), markPos->y, NULL);
+        LineTo(hdc, markPos->x + (tmpR + 5), markPos->y);
+        // vert cross
+        MoveToEx(hdc, markPos->x, markPos->y - (tmpR + 5), NULL);
+        LineTo(hdc, markPos->x, markPos->y + (tmpR + 5));
+        break;
+    }
+    case IDM_TFUNC_GLPF:
+    case IDM_TFUNC_GHPF:
+    {
+        int sigma = (int)dParamVal[2 * markIdx + 1];
+        int _3sig = (int)(dParamVal[2 * markIdx + 1] * 3);
+        // sigma circle
+        Ellipse(hdc, markPos->x - sigma, markPos->y - sigma, markPos->x + sigma, markPos->y + sigma);
+        // 3-sigma circle
+        Ellipse(hdc, markPos->x - _3sig, markPos->y - _3sig, markPos->x + _3sig, markPos->y + _3sig);
+        // horz cross
+        MoveToEx(hdc, markPos->x - (_3sig + 5), markPos->y, NULL);
+        LineTo(hdc, markPos->x + (_3sig + 5), markPos->y);
+        // vert cross
+        MoveToEx(hdc, markPos->x, markPos->y - (_3sig + 5), NULL);
+        LineTo(hdc, markPos->x, markPos->y + (_3sig + 5));
+    }
+    default:
+        break;
+    }
+}
+
 LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     static HDC hdc;
@@ -2583,6 +4022,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
     static UINT width, height;
 
     static MyBGRA* image = NULL;
+    static MyComplex* spectral = NULL;
     
     static HWND btnApply;
     static UINT nFilterType;
@@ -2590,6 +4030,12 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
     static HWND btnSaveMain;
 
     static HWND b3sBorderMode;
+    
+    // Where the right panel should start in horizontal.
+    static UINT xBottomPanelRight = 0;
+    // Where the bottom panel should start in vertical.
+    static UINT yRightPanelBottom = 0;
+
     // Decide the filter how to populate border pixels (BM: Border Mode).
     // We borrow the flags of auto-3-state-button opportunely.
 
@@ -2599,12 +4045,13 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
 
     static UINT nBorderMode = MY_SPAF_BM_MIRROR;
 
-    static HWND lblParam[10];
-    static HWND edtParam[10];
+    static HWND lblParam[20];
+    static HWND edtParam[20];
     // We store [int] and [double] value arrays separately here,
     // as one text can be translated to different numeric types.
-    static int iParamVal[10];
-    static double dParamVal[10];
+    static int iParamVal[20];
+    static double dParamVal[20];
+    static int xParamVal[20], yParamVal[20];
     
     // How many key-value pairs need for each filter type?
     static int nParamCount[] =
@@ -2616,16 +4063,60 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         1, // Median Filter
         0, // Laplace Filter
         0, // Sobel Filter
+        0, // Custom Core
 
         // freq-domain
 
         1, // Power Spectral
         1, // Phase Spectral
+        1, // Power Spectral FFT
+        1, // Phase Spectral FFT
+        0, // Custom Core
+
+        // transfer-func
+
+        10, // Ideal LPF
+        10, // Gaussian LPF
+        11, // Butterworth LPF
+        10, // Ideal HPF
+        10, // Gaussian HPF
+        11, // Butterworth HPF
+        11, // Homomorphic Filter
     };
+
+    // Available display area for image.
+    static int validWidth = 0;
+    static int validHeight = 0;
+
+    static bCsorInValidArea = FALSE;
+
+    // Image display offset.
+    static int xImgAnchor = 0, yImgAnchor = 0;
+
+    // Marker information of transfer-func window.
+    static POINT markerPositions[10];
+
+    static COLORREF markerColors[10] =
+    {
+        0x0000FF, // Red
+        0x007FFF, // Orange
+        0x00FFFF, // Yellow
+        0x00FF00, // Green
+        0xFFFF00, // Cyan
+        0xFF0000, // Blue
+        0xFF008B, // Purple
+        0x000000, // Black
+        0xFFFFFF, // White
+        0x888888  // Gray
+    };
+    static HPEN markerPens[10];
+    // Next marker to place.
+    static UINT currMarkerIdx = 0;
 
     switch (message)
     {
     case WM_CREATE:
+    {
         LPCREATESTRUCT pCreateStruct = (LPCREATESTRUCT)lParam;
         // Get selected spatial filter type.
         nFilterType = (UINT)pCreateStruct->lpCreateParams;
@@ -2635,16 +4126,28 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         EnableMenuItem(gMenu, IDM_DOMAIN, MF_GRAYED | MF_BYPOSITION);
 
         // Allocate memory for image data.
-        size_t nImageByteSize = gBmpInfo.nWidth * gBmpInfo.nHeight * sizeof(MyBGRA);
-        image = (MyBGRA*)malloc(nImageByteSize);
+        size_t nPixelCount = gBmpInfo.nWidth * gBmpInfo.nHeight;
+        image = (MyBGRA*)malloc(nPixelCount * sizeof(MyBGRA));
         myAssert(image);
-        memcpy(image, gImage, nImageByteSize);
+        memcpy(image, gImage, nPixelCount * sizeof(MyBGRA));
+        // Copy spectral by the way (if has).
+        if (gSpectral != NULL)
+        {
+            spectral = (MyComplex*)malloc(nPixelCount * sizeof(MyComplex));
+            myAssert(spectral);
+            memcpy(spectral, gSpectral, nPixelCount * sizeof(MyComplex));
+        }
 
         // Acquire selected menu item text.
-        WCHAR szMenuText[20] = L"卷积滤波 - ";
-        GetMenuString(gMenu, nFilterType, szMenuText + 7, 13, MF_BYCOMMAND);
+        WCHAR szDomainFilterMenuText[20] = L"卷积滤波 - ";
+        WCHAR szTransferFuncMenuText[20] = L"传递函数 - ";
+
+        WCHAR* pSelectedMenuText = (nFilterType >= IDM_TFUNC_ILPF) ?
+            szTransferFuncMenuText : szDomainFilterMenuText;
+
+        GetMenuString(gMenu, nFilterType, pSelectedMenuText + 7, 13, MF_BYCOMMAND);
         // Set child window caption text.
-        SetWindowText(hwnd, szMenuText);
+        SetWindowText(hwnd, pSelectedMenuText);
 
         // Create apply-all button.
         btnApply = CreateWindow(
@@ -2689,9 +4192,17 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
             NULL);
         CheckDlgButton(hwnd, DOMAIN_GENE_BORDER_MODE_BTN, MY_SPAF_BM_MIRROR /* Checked */);
 
-        // Create related parameter widget lines for specific filter type.
-        myCreateParamWidgets(hwnd, nParamCount[nFilterType - IDM_SPAF_BOX],
+        // Record right most of bottom panel.
+        xBottomPanelRight = 36 + 40 * gCharWidth;
+
+        UINT iParamIndex = (nFilterType >= IDM_TFUNC_ILPF) ?
+            ((nFilterType - IDM_TFUNC_ILPF) + MY_DOMAIN_IDM_COUNT) : (nFilterType - IDM_SPAF_BOX);
+        // Create related parameter widget lines for specific filter/tfunc type.
+        myCreateParamWidgets(hwnd, nParamCount[iParamIndex],
                              gBmpInfo.nWidth + 24, lblParam, edtParam);
+
+        // Record bottom most of right panel.
+        yRightPanelBottom = 12 + nParamCount[iParamIndex] * 3 * gCharHeight;
 
         // Decide detailed parameter description for each filter type.
         switch (nFilterType)
@@ -2705,10 +4216,10 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         }
         case IDM_SPAF_GAUS: // Gaussian Filter
         {
-            SetWindowText(lblParam[0], L"强度 (1-sigma)");
+            SetWindowText(lblParam[0], L"强度 (1_sigma)");
             SetWindowText(edtParam[0], L"1");
             dParamVal[0] = 1; // standard deviation
-            SetWindowText(lblParam[1], L"半径 (3-sigma)");
+            SetWindowText(lblParam[1], L"半径 (3_sigma)");
             SetWindowText(edtParam[1], L"3");
             iParamVal[1] = 3; // would better be 3-sigma
             break;
@@ -2718,32 +4229,193 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
             SetWindowText(lblParam[0], L"覆盖半径");
             SetWindowText(edtParam[0], L"1");
             iParamVal[0] = 1;
-            return 0;
+            break;
         }
         case IDM_SPEF_POWER: // Power Spectral
         case IDM_SPEF_PHASE: // Phase Spectral
+        case IDM_SPEF_POWER_FFT:
+        case IDM_SPEF_PHASE_FFT:
         {
             SetWindowText(lblParam[0], L"clog(1+r), c");
             SetWindowText(edtParam[0], L"1");
             dParamVal[0] = 1;
-            return 0;
+            break;
+        }
+        case IDM_TFUNC_ILPF:
+        case IDM_TFUNC_IHPF:
+        {
+#define MY_ILPF_PARAM_LINE(Index) \
+    SetWindowText(lblParam[2 * Index - 2], L"光标 " L#Index L", 中心"); \
+    SetWindowText(edtParam[2 * Index - 2], L"-1, -1"); \
+    SetWindowText(lblParam[2 * Index - 1], L"光标 " L#Index L", 半径"); \
+    SetWindowText(edtParam[2 * Index - 1], L"10"); dParamVal[2 * Index - 2] = 10
+
+            MY_ILPF_PARAM_LINE(1);
+            MY_ILPF_PARAM_LINE(2);
+            MY_ILPF_PARAM_LINE(3);
+            MY_ILPF_PARAM_LINE(4);
+            MY_ILPF_PARAM_LINE(5);
+
+#undef MY_ILPF_PARAM_LINE
+            break;
+        }
+        case IDM_TFUNC_GLPF:
+        case IDM_TFUNC_GHPF:
+        {
+#define MY_GLPF_PARAM_LINE(Index) \
+    SetWindowText(lblParam[2 * Index - 2], L"光标 " L#Index L", 中心"); \
+    SetWindowText(edtParam[2 * Index - 2], L"-1, -1"); \
+    SetWindowText(lblParam[2 * Index - 1], L"光标 " L#Index L", sigma"); \
+    SetWindowText(edtParam[2 * Index - 1], L"10"); dParamVal[2 * Index - 2] = 10
+
+            MY_GLPF_PARAM_LINE(1);
+            MY_GLPF_PARAM_LINE(2);
+            MY_GLPF_PARAM_LINE(3);
+            MY_GLPF_PARAM_LINE(4);
+            MY_GLPF_PARAM_LINE(5);
+
+#undef MY_GLPF_PARAM_LINE
+            break;
+        }
+        case IDM_TFUNC_BLPF:
+        case IDM_TFUNC_BHPF:
+        {
+#define MY_BLPF_PARAM_LINE(Index) \
+    SetWindowText(lblParam[2 * Index - 2], L"光标 " L#Index L", 中心"); \
+    SetWindowText(edtParam[2 * Index - 2], L"-1, -1"); \
+    SetWindowText(lblParam[2 * Index - 1], L"光标 " L#Index L", 截止频率"); \
+    SetWindowText(edtParam[2 * Index - 1], L"10"); dParamVal[2 * Index - 2] = 10
+
+            MY_BLPF_PARAM_LINE(1);
+            MY_BLPF_PARAM_LINE(2);
+            MY_BLPF_PARAM_LINE(3);
+            MY_BLPF_PARAM_LINE(4);
+            MY_BLPF_PARAM_LINE(5);
+
+            SetWindowText(lblParam[10], L"Butterworth 阶数");
+            SetWindowText(edtParam[10], L"2.25"); dParamVal[10] = 2.25;
+
+#undef MY_BLPF_PARAM_LINE
+            break;
+        }
+        case IDM_TFUNC_HOMO:
+        {
+#define MY_HOMO_PARAM_LINE(Index) \
+    SetWindowText(lblParam[2 * Index - 2], L"光标 " L#Index L", 中心"); \
+    SetWindowText(edtParam[2 * Index - 2], L"-1, -1"); \
+    SetWindowText(lblParam[2 * Index - 1], L"光标 " L#Index L", 拟合 sigma"); \
+    SetWindowText(edtParam[2 * Index - 1], L"10"); dParamVal[2 * Index - 2] = 10
+
+            MY_HOMO_PARAM_LINE(1);
+            MY_HOMO_PARAM_LINE(2);
+            MY_HOMO_PARAM_LINE(3);
+            MY_HOMO_PARAM_LINE(4);
+
+            SetWindowText(lblParam[8], L"偏斜度 c");
+            SetWindowText(edtParam[8], L"5"); dParamVal[8] = 5;
+
+            SetWindowText(lblParam[9], L"Gamma Low");
+            SetWindowText(edtParam[9], L"0.5"); dParamVal[9] = 0.5;
+
+            SetWindowText(lblParam[10], L"Gamma High");
+            SetWindowText(edtParam[10], L"5"); dParamVal[10] = 5;
+
+#undef MY_BLPF_PARAM_LINE
+            break;
         }
         default:
             break;
         }
-        return 0;
 
+        // Initialize helper variables.
+        validWidth = gBmpInfo.nWidth;
+        validHeight = gBmpInfo.nHeight;
+
+        // Create marker utils for transfer-func window.
+        if (nFilterType >= IDM_TFUNC_ILPF)
+        {
+            int i; // Declare common index variables here.
+            for (i = 0; i < _countof(markerPositions); ++i)
+            {
+                // Initialize as unused to hide the marker.
+                markerPositions[i].x = markerPositions[i].y = -1;
+            }
+            // Create marker color pens.
+            for (i = 0; i < _countof(markerColors); ++i)
+            {
+                markerPens[i] = CreatePen(PS_SOLID, 2, markerColors[i]);
+            }
+        }
+
+        UINT tmpOrgX = gBmpInfo.nWidth + 24;
+        UINT tmpOrgY = gBmpInfo.nHeight + 2 * gCharHeight + 12;
+        // Resize window to display all widgets.
+        if (xBottomPanelRight > tmpOrgX || yRightPanelBottom > tmpOrgY)
+        {
+            RECT rc;
+            rc.left = rc.top = 0;
+            rc.right = max(xBottomPanelRight, tmpOrgX) + 25 * gCharWidth + 12;
+            rc.bottom = max(yRightPanelBottom, tmpOrgY); // no extra padding
+            AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+            // Only change window width.
+            MoveWindow(hwnd, pCreateStruct->x, pCreateStruct->y,
+                       rc.right - rc.left, rc.bottom - rc.top, TRUE);
+        }
+        return 0;
+    }
     case WM_MOVE:
         left = LOWORD(lParam);
         top = HIWORD(lParam);
         return 0;
 
+    case WM_KEYDOWN:
+    {
+        // Change current selected marker.
+        // '0' for 10th marker.
+        if (wParam == '0')
+            currMarkerIdx = 9;
+        // '1' ~ '9' for 1st ~ 9th markers.
+        else if (wParam > '0' && wParam <= '9')
+            currMarkerIdx = (UINT)wParam - '0' - 1;
+
+        // Make sure marker index is in valid range.
+        switch (nFilterType)
+        {
+        case IDM_TFUNC_ILPF:
+        case IDM_TFUNC_GLPF:
+        case IDM_TFUNC_BLPF:
+        case IDM_TFUNC_IHPF:
+        case IDM_TFUNC_GHPF:
+        case IDM_TFUNC_BHPF:
+            currMarkerIdx = min(4, currMarkerIdx);
+            break;
+        case IDM_TFUNC_HOMO:
+            currMarkerIdx = min(3, currMarkerIdx);
+            break;
+        default:
+            break;
+        }
+
+        // There's no need to erase since double-buffer is enabled.
+        InvalidateRect(hwnd, NULL, FALSE);
+        return 0;
+    }
     case WM_SIZE:
     {
         RECT rc;
         GetClientRect(hwnd, &rc);
         UINT clntWidth = rc.right - rc.left;
         UINT clntHeight = rc.bottom - rc.top;
+
+        // Recalculate available image area.
+        validWidth = rc.right - rc.left - 36 - 25 * gCharWidth;
+        validHeight = rc.bottom - rc.top - 12 - 2 * gCharHeight;
+        // Clamp to origin image size when window is larger.
+        validWidth = min(validWidth, gBmpInfo.nWidth);
+        validHeight = min(validHeight, gBmpInfo.nHeight);
+
+        // Always reset image anchor when resized.
+        xImgAnchor = yImgAnchor = 0;
 
         // Keep apply-all button stick to window bottom.
         GetWindowRect(btnApply, &rc);
@@ -2758,9 +4430,11 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         MoveWindow(b3sBorderMode, 24 + 24 * gCharWidth, clntHeight - 6 - (rc.bottom - rc.top),
                    rc.right - rc.left, rc.bottom - rc.top, TRUE);
 
+        UINT iParamIndex = (nFilterType >= IDM_TFUNC_ILPF) ?
+            ((nFilterType - IDM_TFUNC_ILPF) + MY_DOMAIN_IDM_COUNT) : (nFilterType - IDM_SPAF_BOX);
         // Keep widget lines stick to right border of window.
-        myMoveParamWidgets(nParamCount[nFilterType - IDM_SPAF_BOX],
-                           clntWidth - 12 - 24 * gCharWidth, lblParam, edtParam);
+        myMoveParamWidgets(nParamCount[iParamIndex],
+                           clntWidth - 12 - 25 * gCharWidth, lblParam, edtParam);
 
         width = LOWORD(lParam);
         height = HIWORD(lParam);
@@ -2769,12 +4443,207 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
     case WM_PAINT:
         hdc = BeginPaint(hwnd, &ps);
 
-        // Display image on left-top corner.
-        myDisplayImage(hdc, 12, 0, image, &gBmpInfo);
+        RECT rcClnt;
+        GetClientRect(hwnd, &rcClnt);
+        //--------------------------------------------------------------------- Double Buffer Start
+        HDC hMemDC = CreateCompatibleDC(hdc); // Acquire copy device context.
+        HBITMAP hMemBmp = CreateCompatibleBitmap( // Draw on temporary bitmap.
+            hdc, rcClnt.right - rcClnt.left, rcClnt.bottom - rcClnt.top);
+        SelectObject(hMemDC, hMemBmp);
+        // Erase with master window's bkgn brush.
+        FillRect(hMemDC, &rcClnt, (HBRUSH)GetClassLongPtr(hwnd, GCLP_HBRBACKGROUND));
+        //---------------------------------------------------------------------
+
+        int tmpCX = (int)width - 36 - 25 * (int)gCharWidth;
+        int tmpCY = (int)height - 12 - 2 * (int)gCharHeight;
+        // We have to do this to stick the image at left top,
+        // since Y-axis is flipped in origin pixel buffer.
+        int tmpImgY = tmpCY - gBmpInfo.nHeight;
+        // Display image from left top corner of main window.
+        myDisplayImage(hMemDC, 12, 0, max(0, tmpCX), max(0, tmpCY),
+                       xImgAnchor, abs(min(0, tmpImgY)) + yImgAnchor, image, &gBmpInfo);
+
+        // Show marker for transfer-func window.
+        if (nFilterType >= IDM_TFUNC_ILPF)
+        {
+            int i; // Declare common index variables here.
+
+            POINT tmpPT;
+            GetCursorPos(&tmpPT);
+            ScreenToClient(hwnd, &tmpPT);
+            // Display next marker hint (hide in move mode).
+            if (bCsorInValidArea && !(GetAsyncKeyState(VK_RBUTTON) & 0x8000))
+            {
+                HPEN orgPen = SelectObject(hMemDC, markerPens[currMarkerIdx]);
+                HBRUSH orgBrush = SelectObject(hMemDC, GetStockObject(NULL_BRUSH));
+
+                myDrawTransferFuncCursor(hMemDC, nFilterType, iParamVal, dParamVal,
+                                         xParamVal, yParamVal, &tmpPT, currMarkerIdx);
+
+                SelectObject(hMemDC, orgPen);
+                SelectObject(hMemDC, orgBrush);
+            }
+
+            // Display verified markers.
+            for (i = 0; i < _countof(markerPositions); ++i)
+            {
+                HPEN orgPen = SelectObject(hMemDC, GetStockObject(NULL_PEN));
+                HBRUSH orgBrush = SelectObject(hMemDC, GetStockObject(NULL_BRUSH));
+
+                // From image coordinate to window coordinate.
+                POINT relativePT = { markerPositions[i].x - abs(xImgAnchor) + 12,
+                                     markerPositions[i].y - abs(yImgAnchor) };
+                // Check marker whether in valid area.
+                if (relativePT.x >= 12 && relativePT.x <= 12 + validWidth &&
+                    relativePT.y >= 0 && relativePT.y <= validHeight)
+                {
+                    SelectObject(hMemDC, markerPens[i]);
+
+                    myDrawTransferFuncCursor(hMemDC, nFilterType, iParamVal, dParamVal,
+                                             xParamVal, yParamVal, &relativePT, i /* marIdx */);
+                }
+                SelectObject(hMemDC, orgPen);
+                SelectObject(hMemDC, orgBrush);
+            }
+        }
+
+        //--------------------------------------------------------------------- Double Buffer End
+        BitBlt(hdc, 0, 0, rcClnt.right - rcClnt.left,
+               rcClnt.bottom - rcClnt.top, hMemDC, 0, 0, SRCCOPY);
+        DeleteDC(hMemDC);
+        DeleteObject(hMemBmp);
+        //---------------------------------------------------------------------
 
         EndPaint(hwnd, &ps);
         return 0;
 
+    case WM_SETCURSOR:
+    {
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(hwnd, &pt);
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+
+        // Get valid area boundary.
+        int tmpWndRightMost = rc.right - 24 - 20 * gCharWidth;
+        int tmpImgRightMost = 12 + gBmpInfo.nWidth;
+        int tmpWndBottomMost = rc.bottom - 12 - 2 * gCharHeight;
+        int tmpImgBottomMost = gBmpInfo.nHeight;
+
+        // Check whether above the image.
+        if (pt.x >= 12 && pt.x < min(tmpImgRightMost, tmpWndRightMost) &&
+            pt.y >= 0 && pt.y < min(tmpImgBottomMost, tmpWndBottomMost))
+        {
+            if (GetAsyncKeyState(VK_RBUTTON) & 0x8000)
+                // Hold down right button to start move.
+                SetCursor(LoadCursor(NULL, MAKEINTRESOURCE(IDC_SIZEALL)));
+            else
+                // Show mark cursor otherwise.
+                SetCursor(LoadCursor(NULL, MAKEINTRESOURCE(IDC_HAND)));
+
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(hwnd, NULL, FALSE);
+            bCsorInValidArea = TRUE; // cursor in workspace
+
+            return 0;
+        }
+
+        // There's no need to erase since double-buffer is enabled.
+        if (bCsorInValidArea) InvalidateRect(hwnd, NULL, FALSE);
+        bCsorInValidArea = FALSE; // cursor out of workspace
+
+        break; // Use default cursor in other places.
+    }
+    case WM_MOUSEMOVE:
+    {
+        static int csorCurrX, csorCurrY;
+        static int csorLastX, csorLastY;
+
+        csorCurrX = GET_X_LPARAM(lParam);
+        csorCurrY = GET_Y_LPARAM(lParam);
+
+        if (bCsorInValidArea) // in workspace
+        {
+            // Mark position for transfer-func window.
+            if (nFilterType >= IDM_TFUNC_ILPF && (wParam & MK_LBUTTON))
+            {
+                // From window coordinate to image coordinate.
+                markerPositions[currMarkerIdx].x = csorCurrX + abs(xImgAnchor);
+                markerPositions[currMarkerIdx].y = csorCurrY + abs(yImgAnchor);
+                // Use update logic in WM_LBUTTONDOWN.
+                goto start_update_marker_center_edit_text;
+            }
+        end_update_marker_center_edit_text:
+            // Trigger move mode.
+            if (wParam & MK_RBUTTON)
+            {
+                // Note +/- to match image coordinate.
+                xImgAnchor -= (csorCurrX - csorLastX);
+                yImgAnchor += (csorCurrY - csorLastY);
+
+                // Clamp image anchor offset into valid range.
+                // X offset: 0 ~ (ImgW - ValidW)
+                int xOffsetMost = gBmpInfo.nWidth - validWidth;
+                xImgAnchor = max(0, min(xOffsetMost, xImgAnchor));
+                // Y offset: (ValidH - ImgH) ~ 0
+                int yOffsetMost = validHeight - gBmpInfo.nHeight;
+                yImgAnchor = max(yOffsetMost, min(0, yImgAnchor));
+            }
+            // We have notified to repaint in WM_SETCURSOR.
+        }
+        csorLastX = csorCurrX;
+        csorLastY = csorCurrY;
+        return 0;
+    }
+    case WM_RBUTTONDOWN:
+        // Help kill focus of child widgets.
+        SetFocus(hwnd);
+        return 0;
+    case WM_LBUTTONDOWN:
+    {
+        SetFocus(hwnd);
+        // Mark position for transfer-func window.
+        if (nFilterType >= IDM_TFUNC_ILPF)
+        {
+            // From window coordinate to image coordinate.
+            markerPositions[currMarkerIdx].x = GET_X_LPARAM(lParam) + abs(xImgAnchor);
+            markerPositions[currMarkerIdx].y = GET_Y_LPARAM(lParam) + abs(yImgAnchor);
+
+            start_update_marker_center_edit_text:
+            {
+                UINT tmpIdx;
+                WCHAR szTmpNum[20];
+                // Update edit text.
+                switch (nFilterType)
+                {
+                case IDM_TFUNC_ILPF:
+                case IDM_TFUNC_GLPF:
+                case IDM_TFUNC_BLPF:
+                case IDM_TFUNC_IHPF:
+                case IDM_TFUNC_GHPF:
+                case IDM_TFUNC_BHPF:
+                case IDM_TFUNC_HOMO:
+                {
+                    tmpIdx = 2 * currMarkerIdx;
+                    xParamVal[tmpIdx] = markerPositions[currMarkerIdx].x - 12;
+                    yParamVal[tmpIdx] = markerPositions[currMarkerIdx].y;
+                    break;
+                }
+                default:
+                    break;
+                }
+                wsprintf(szTmpNum, L"%d, %d", xParamVal[tmpIdx], yParamVal[tmpIdx]);
+                SetWindowText(edtParam[tmpIdx], szTmpNum);
+                // Return to handle mouse move logic after update text.
+                if (message == WM_MOUSEMOVE) goto end_update_marker_center_edit_text;
+            }
+            
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
+        return 0;
+    }
     case WM_COMMAND:
     {
         switch (LOWORD(wParam))
@@ -2799,20 +4668,229 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
                 myDomainSobelFilter(image, gImage, &gBmpInfo, nBorderMode);
                 break;
             case IDM_SPEF_POWER: // Fourier transform, power spectral.
-                myPowerSpectral(image, gImage, &gBmpInfo, dParamVal[0]);
+                if (spectral != NULL) free(spectral);
+                spectral = myPowerSpectral(image, gImage, &gBmpInfo, dParamVal[0]);
                 break;
             case IDM_SPEF_PHASE: // Fourier transform, phase spectral.
-                myPhaseSpectral(image, gImage, &gBmpInfo, dParamVal[0]);
+                if (spectral != NULL) free(spectral);
+                spectral = myPhaseSpectral(image, gImage, &gBmpInfo, dParamVal[0]);
+                break;
+            case IDM_SPEF_POWER_FFT: // FFT accelerated power spectral.
+            {
+                if (spectral != NULL) free(spectral);
+                spectral = (MyComplex*)malloc(gBmpInfo.nWidth * gBmpInfo.nHeight * sizeof(MyComplex));
+                myAssert(spectral);
+
+                // Padding zeros for non-radix-2 FFT.
+                UINT RM = myGetRadix2(gBmpInfo.nWidth);
+                UINT RN = myGetRadix2(gBmpInfo.nHeight);
+                MyBmpInfo tmpInfo;
+                MyBGRA* tmpDstImg = myPaddingZeroImageFFT(&tmpInfo, image, &gBmpInfo);
+                MyBGRA* tmpSrcImg = myPaddingZeroImageFFT(&tmpInfo, gImage, &gBmpInfo);
+
+                MyComplex* tmpSptl = myPowerSpectralFFT(tmpDstImg, tmpSrcImg, &tmpInfo, RM, RN, dParamVal[0]);
+
+                // Copy from padding buffers.
+                for (UINT i = 0; i < gBmpInfo.nWidth; ++i)
+                    for (UINT j = 0; j < gBmpInfo.nHeight; ++j)
+                    {
+                        UINT dstIdx = i + j * gBmpInfo.nWidth;
+                        UINT srcIdx = i + j * tmpInfo.nWidth;
+                        image[dstIdx] = tmpDstImg[srcIdx];
+                        spectral[dstIdx] = tmpSptl[srcIdx];
+                    }
+                free(tmpDstImg); free(tmpSrcImg); free(tmpSptl);
+                break;
+            }
+            case IDM_SPEF_PHASE_FFT: // FFT accelerated phase spectral.
+            {
+                if (spectral != NULL) free(spectral);
+                spectral = (MyComplex*)malloc(gBmpInfo.nWidth * gBmpInfo.nHeight * sizeof(MyComplex));
+                myAssert(spectral);
+
+                // Padding zeros for non-radix-2 FFT.
+                UINT RM = myGetRadix2(gBmpInfo.nWidth);
+                UINT RN = myGetRadix2(gBmpInfo.nHeight);
+                MyBmpInfo tmpInfo;
+                MyBGRA* tmpDstImg = myPaddingZeroImageFFT(&tmpInfo, image, &gBmpInfo);
+                MyBGRA* tmpSrcImg = myPaddingZeroImageFFT(&tmpInfo, gImage, &gBmpInfo);
+
+                MyComplex* tmpSptl = myPhaseSpectralFFT(tmpDstImg, tmpSrcImg, &tmpInfo, RM, RN, dParamVal[0]);
+
+                // Copy from padding buffers.
+                for (UINT i = 0; i < gBmpInfo.nWidth; ++i)
+                    for (UINT j = 0; j < gBmpInfo.nHeight; ++j)
+                    {
+                        UINT dstIdx = i + j * gBmpInfo.nWidth;
+                        UINT srcIdx = i + j * tmpInfo.nWidth;
+                        image[dstIdx] = tmpDstImg[srcIdx];
+                        spectral[dstIdx] = tmpSptl[srcIdx];
+                    }
+                free(tmpDstImg); free(tmpSrcImg); free(tmpSptl);
+                break;
+            }
+            case IDM_TFUNC_ILPF: // Ideal Low Pass Filter
+            case IDM_TFUNC_IHPF: // Ideal High Pass Filter
+                if (spectral != NULL)
+                {
+                    static POINT ilpfCenter[10];
+                    static double ilpfRadius[10];
+                    static UINT ilpfValidCount;
+
+                    ilpfValidCount = 0;
+                    for (int i = 0; i < _countof(ilpfCenter); ++i)
+                    {
+                        POINT tmpPT = { markerPositions[i].x,
+                            // Note image Y-axis is flipped.
+                            gBmpInfo.nHeight - markerPositions[i].y };
+                        // Count valid ideal low/high pass filters.
+                        if (tmpPT.x >= 0 && tmpPT.x < gBmpInfo.nWidth &&
+                            tmpPT.y >= 0 && tmpPT.y < gBmpInfo.nHeight)
+                        {
+                            ilpfCenter[ilpfValidCount] = tmpPT;
+                            ilpfRadius[ilpfValidCount] = dParamVal[2 * ilpfValidCount + 1];
+                            ++ilpfValidCount; // Prepare for next filter checking.
+                        }
+                    }
+                    // No need to call function for empty filter list.
+                    if (ilpfValidCount != 0)
+                    {
+                        if (nFilterType == IDM_TFUNC_ILPF)
+                            myTfuncIdealLPF(spectral, &gBmpInfo, ilpfCenter, ilpfRadius, ilpfValidCount);
+                        else
+                            myTfuncIdealHPF(spectral, &gBmpInfo, ilpfCenter, ilpfRadius, ilpfValidCount);
+
+                        mycpLogarithmTrans(image, spectral, gBmpInfo.nWidth, gBmpInfo.nHeight, 1);
+                    }
+                }
+                break;
+            case IDM_TFUNC_GLPF: // Gaussian Low Pass Filter
+            case IDM_TFUNC_GHPF: // Gaussian High Pass Filter
+                if (spectral != NULL)
+                {
+                    static POINT glpfCenter[10];
+                    static double glpfSigma[10];
+                    static UINT glpfValidCount;
+
+                    glpfValidCount = 0;
+                    for (int i = 0; i < _countof(glpfCenter); ++i)
+                    {
+                        POINT tmpPT = { markerPositions[i].x,
+                            // Note image Y-axis is flipped.
+                            gBmpInfo.nHeight - markerPositions[i].y };
+                        // Count valid ideal low/high pass filters.
+                        if (tmpPT.x >= 0 && tmpPT.x < gBmpInfo.nWidth &&
+                            tmpPT.y >= 0 && tmpPT.y < gBmpInfo.nHeight)
+                        {
+                            glpfCenter[glpfValidCount] = tmpPT;
+                            glpfSigma[glpfValidCount] = dParamVal[2 * glpfValidCount + 1];
+                            ++glpfValidCount; // Prepare for next filter checking.
+                        }
+                    }
+                    // No need to call function for empty filter list.
+                    if (glpfValidCount != 0)
+                    {
+                        if (nFilterType == IDM_TFUNC_GLPF)
+                            myTfuncGaussianLPF(spectral, &gBmpInfo, glpfCenter, glpfSigma, glpfValidCount);
+                        else
+                            myTfuncGaussianHPF(spectral, &gBmpInfo, glpfCenter, glpfSigma, glpfValidCount);
+
+                        mycpLogarithmTrans(image, spectral, gBmpInfo.nWidth, gBmpInfo.nHeight, 1);
+                    }
+                }
+                break;
+            case IDM_TFUNC_BLPF: // Butterworth Low Pass Filter
+            case IDM_TFUNC_BHPF: // Butterworth High Pass Filter
+                if (spectral != NULL)
+                {
+                    static POINT blpfCenter[10];
+                    static double blpfCutoff[10];
+                    static UINT blpfValidCount;
+
+                    blpfValidCount = 0;
+                    for (int i = 0; i < _countof(blpfCenter); ++i)
+                    {
+                        POINT tmpPT = { markerPositions[i].x,
+                            // Note image Y-axis is flipped.
+                            gBmpInfo.nHeight - markerPositions[i].y };
+                        // Count valid ideal low/high pass filters.
+                        if (tmpPT.x >= 0 && tmpPT.x < gBmpInfo.nWidth &&
+                            tmpPT.y >= 0 && tmpPT.y < gBmpInfo.nHeight)
+                        {
+                            blpfCenter[blpfValidCount] = tmpPT;
+                            blpfCutoff[blpfValidCount] = dParamVal[2 * blpfValidCount + 1];
+                            ++blpfValidCount; // Prepare for next filter checking.
+                        }
+                    }
+                    // No need to call function for empty filter list.
+                    if (blpfValidCount != 0)
+                    {
+                        if (nFilterType == IDM_TFUNC_BLPF)
+                            myTfuncButterworthLPF(spectral, &gBmpInfo, blpfCenter,
+                                                  blpfCutoff, dParamVal[10], blpfValidCount);
+                        else
+                            myTfuncButterworthHPF(spectral, &gBmpInfo, blpfCenter,
+                                                  blpfCutoff, dParamVal[10], blpfValidCount);
+
+                        mycpLogarithmTrans(image, spectral, gBmpInfo.nWidth, gBmpInfo.nHeight, 1);
+                    }
+                }
+                break;
+            case IDM_TFUNC_HOMO: // Homomorphic Filter
+                if (spectral != NULL)
+                {
+                    static POINT homoCenter[10];
+                    static double homoSigma[10];
+                    static UINT homoValidCount;
+
+                    homoValidCount = 0;
+                    for (int i = 0; i < _countof(homoCenter); ++i)
+                    {
+                        POINT tmpPT = { markerPositions[i].x,
+                            // Note image Y-axis is flipped.
+                            gBmpInfo.nHeight - markerPositions[i].y };
+                        // Count valid homomorphic filters.
+                        if (tmpPT.x >= 0 && tmpPT.x < gBmpInfo.nWidth &&
+                            tmpPT.y >= 0 && tmpPT.y < gBmpInfo.nHeight)
+                        {
+                            homoCenter[homoValidCount] = tmpPT;
+                            homoSigma[homoValidCount] = dParamVal[2 * homoValidCount + 1];
+                            ++homoValidCount; // Prepare for next filter checking.
+                        }
+                    }
+                    // No need to call function for empty filter list.
+                    if (homoValidCount != 0)
+                    {
+                        myTfuncHomomorphicFilter(spectral, &gBmpInfo, homoCenter, homoSigma,
+                                                 dParamVal[8], dParamVal[9], dParamVal[10], homoValidCount);
+
+                        mycpLogarithmTrans(image, spectral, gBmpInfo.nWidth, gBmpInfo.nHeight, 1);
+                    }
+                }
                 break;
             default:
                 break;
             }
+            // There's no need to erase since double-buffer is enabled.
             InvalidateRect(hwnd, NULL, TRUE);
             return 0;
         }
         case DOMAIN_GENE_SAVE_MAIN_BTN:
         {
-            memcpy(gImage, image, gBmpInfo.nWidth * gBmpInfo.nHeight * sizeof(MyBGRA));
+            UINT nPixelCount = gBmpInfo.nWidth * gBmpInfo.nHeight;
+            memcpy(gImage, image, nPixelCount * sizeof(MyBGRA));
+            // Copy spectral by the way (if has).
+            if (spectral != NULL)
+            {
+                if (gSpectral == NULL)
+                {
+                    gSpectral = (MyComplex*)malloc(nPixelCount * sizeof(MyComplex));
+                }
+                myAssert(gSpectral);
+                memcpy(gSpectral, spectral, nPixelCount * sizeof(MyComplex));
+            }
+            // Release spectral otherwise.
+            else if (gSpectral != NULL) { free(gSpectral); gSpectral = NULL; }
 
             // Notify user to save change.
             WCHAR title[MAX_PATH + 20];
@@ -2820,7 +4898,8 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
             SetWindowText(gMainWnd, title);
 
             // Repaint main window image.
-            InvalidateRect(gMainWnd, NULL, TRUE);
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(gMainWnd, NULL, FALSE);
             return 0;
         }
         case DOMAIN_GENE_BORDER_MODE_BTN:
@@ -2842,7 +4921,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
             }
             return 0;
         }
-        // Max support 10 different key-value pairs.
+        // Max support 20 different key-value pairs.
         case DOMAIN_GENE_PARAM_EDT + 0:
         case DOMAIN_GENE_PARAM_EDT + 1:
         case DOMAIN_GENE_PARAM_EDT + 2:
@@ -2853,6 +4932,16 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         case DOMAIN_GENE_PARAM_EDT + 7:
         case DOMAIN_GENE_PARAM_EDT + 8:
         case DOMAIN_GENE_PARAM_EDT + 9:
+        case DOMAIN_GENE_PARAM_EDT + 10:
+        case DOMAIN_GENE_PARAM_EDT + 11:
+        case DOMAIN_GENE_PARAM_EDT + 12:
+        case DOMAIN_GENE_PARAM_EDT + 13:
+        case DOMAIN_GENE_PARAM_EDT + 14:
+        case DOMAIN_GENE_PARAM_EDT + 15:
+        case DOMAIN_GENE_PARAM_EDT + 16:
+        case DOMAIN_GENE_PARAM_EDT + 17:
+        case DOMAIN_GENE_PARAM_EDT + 18:
+        case DOMAIN_GENE_PARAM_EDT + 19:
         {
             int idxParam = (int)(LOWORD(wParam) - DOMAIN_GENE_PARAM_EDT);
 
@@ -2861,11 +4950,17 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
 
             int iUserInput;
             float fUserInput;
+            int xUserInput, yUserInput;
             // Populate parameter with user input.
             if (swscanf(szParam, L"%d", &iUserInput) == 1)
                 iParamVal[idxParam] = iUserInput;
             if (swscanf(szParam, L"%f", &fUserInput) == 1)
                 dParamVal[idxParam] = (double)fUserInput;
+            if (swscanf(szParam, L"%d,%d", &xUserInput, &yUserInput) == 2)
+            {
+                xParamVal[idxParam] = xUserInput;
+                yParamVal[idxParam] = yUserInput;
+            }
 
             switch (nFilterType)
             {
@@ -2883,7 +4978,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
             {
                 if (idxParam == 0) // sigma
                 {
-                    // Make sure standard deviation is positive.
+                    // Make sure standard deviation not less than 1.
                     dParamVal[0] = max(1, dParamVal[0]);
                 }
                 else if (idxParam == 1) // blur radius
@@ -2912,6 +5007,47 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
                 }
                 return 0;
             }
+            case IDM_TFUNC_ILPF:
+            case IDM_TFUNC_GLPF:
+            case IDM_TFUNC_BLPF:
+            case IDM_TFUNC_IHPF:
+            case IDM_TFUNC_GHPF:
+            case IDM_TFUNC_BHPF:
+            case IDM_TFUNC_HOMO:
+            {
+                if (idxParam % 2 == 0)
+                {
+                    if (idxParam == 10 && (nFilterType == IDM_TFUNC_BLPF || nFilterType == IDM_TFUNC_BHPF))
+                    {
+                        // Make sure Butterworth order is not less than 0.001.
+                        dParamVal[idxParam] = max(1e-3, dParamVal[idxParam]);
+                    }
+                    else if (idxParam >= 8 && idxParam <= 10 && (nFilterType == IDM_TFUNC_HOMO))
+                    {
+                        if (idxParam == 8) // slope, c [not less than 0.001]
+                            dParamVal[idxParam] = max(1e-3, dParamVal[idxParam]);
+                        else if (idxParam == 9) // gamma low [not larger than gamma high]
+                            dParamVal[idxParam] = max(0, min(dParamVal[idxParam + 1], dParamVal[idxParam]));
+                        else // idxParam == 10 --> gamma high [not less than gamma low]
+                            dParamVal[idxParam] = max(dParamVal[idxParam - 1], dParamVal[idxParam]);
+                    }
+                    else
+                    {
+                        UINT tmpIdx = idxParam / 2;
+                        // Cursor center position.
+                        markerPositions[tmpIdx].x = xParamVal[idxParam];
+                        markerPositions[tmpIdx].y = yParamVal[idxParam];
+                    }
+                }
+                else // Low/high pass core radius/sigma/cutoff.
+                {
+                    // Make sure LPF/HPF radius/sigma/cutoff is not less than 1.
+                    dParamVal[idxParam] = max(1, dParamVal[idxParam]);
+                }
+                // There's no need to erase since double-buffer is enabled.
+                InvalidateRect(hwnd, NULL, FALSE);
+                return 0;
+            }
             default:
                 return 0;
             }
@@ -2920,9 +5056,52 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
             return 0;
         }
     }
+    case WM_MOUSEWHEEL:
+    {
+        double tmpDelta = (GET_WHEEL_DELTA_WPARAM(wParam) / (double)WHEEL_DELTA);
+
+        switch (nFilterType)
+        {
+        case IDM_TFUNC_ILPF:
+        case IDM_TFUNC_GLPF:
+        case IDM_TFUNC_BLPF:
+        case IDM_TFUNC_IHPF:
+        case IDM_TFUNC_GHPF:
+        case IDM_TFUNC_BHPF:
+        case IDM_TFUNC_HOMO:
+        {
+            UINT tmpIdx = 2 * currMarkerIdx + 1;
+
+            dParamVal[tmpIdx] += ((LOWORD(wParam) & MK_SHIFT) ? 1 : 10) * tmpDelta;
+            // Make sure core radius/sigma is not less than 1.
+            dParamVal[tmpIdx] = max(1, dParamVal[tmpIdx]);
+
+            WCHAR szTmp[20];
+            // Update radius edit text.
+            wsprintf(szTmp, L"%d", (int)dParamVal[tmpIdx]);
+            SetWindowText(edtParam[tmpIdx], szTmp);
+        }
+        default:
+            break;
+        }
+        // There's no need to erase since double-buffer is enabled.
+        InvalidateRect(hwnd, NULL, FALSE);
+        return 0;
+    }
     case WM_DESTROY:
+        // Not we have created custom pens for transfer-func window.
+        if (nFilterType >= IDM_TFUNC_ILPF)
+        {
+            for (int i = 0; i < _countof(markerPens); ++i)
+            {
+                DeleteObject(markerPens[i]);
+            }
+        }
         // Restore config variables.
+        currMarkerIdx = 0;
         nBorderMode = MY_SPAF_BM_MIRROR;
+        // We might have allocated memory for spectral data.
+        if (spectral != NULL) { free(spectral); spectral = NULL; }
         // Note we have allocated memory for image data.
         free(image);
         // If this is the last child window to destroy.
@@ -3004,7 +5183,7 @@ LRESULT CALLBACK AppAboutWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 
     static MyBmpInfo appIconInfo = { 32, 32 };
 
-    static WCHAR szAppVersion[] = L"BitmapViewer 位图工具 v1.0";
+    static WCHAR szAppVersion[] = L"BitmapViewer 位图工具 v2.0";
     static WCHAR szAuthorCopy[] = L"Copyleft (cl) 2022 文亦尧";
 
     switch (message)
@@ -3103,49 +5282,74 @@ HMENU myLoadMainMenu()
 // separator
 #define OPT_______ MF_SEPARATOR, 0, 0
 #define OPT____END MF_SEPARATOR | MF_END, 0, 0
+// accelerator
+#define MY_ACCEL_CTRL L'\t', L'C', L't', L'r', L'l', L'+'
+#define MY_ACCEL_CTRL_SHIFT L'\t', L'C', L't', L'r', L'l', L'+', L'S', L'h', L'i', L'f', L't', L'+'
 
-        // Option   ID                  String
-        OPT_TOPLEV,                     L'文', L'件', 0,
-        OPT_MIDDLE, IDM_FILE_NEW,       L'新', L'建', 0,
-        OPT_MIDDLE, IDM_FILE_OPEN,      L'打', L'开', 0,
+        // Option   ID                      String
+        OPT_TOPLEV,                         L'文', L'件', 0,
+        OPT_MIDDLE, IDM_FILE_NEW_256x256,   L'新', L'建', L'2', L'5', L'6', L'x', L'2', L'5', L'6', 0,
+        OPT_MIDDLE, IDM_FILE_NEW_512x512,   L'新', L'建', L'5', L'1', L'2', L'x', L'5', L'1', L'2', 0,
+        OPT_MIDDLE, IDM_FILE_NEW_1024x1024, L'新', L'建', L'1', L'0', L'2', L'4', L'x', L'1', L'0', L'2', L'4', 0,
         OPT_______,
-        OPT_MIDDLE, IDM_FILE_SECOND,    L'第', L'二', L'窗', L'口', 0,
+        OPT_MIDDLE, IDM_FILE_OPEN,          L'打', L'开', MY_ACCEL_CTRL, L'O', 0,
         OPT_______,
-        OPT_MIDDLE, IDM_FILE_SAVE,      L'保', L'存', 0,
-        OPT_MIDDLE, IDM_FILE_SAVE_AS,   L'另', L'存', L'为', 0,
+        OPT_MIDDLE, IDM_FILE_SECOND,        L'第', L'二', L'窗', L'口', 0,
         OPT_______,
-        OPT_MIDEND, IDM_FILE_EXP_TXT,   L'导', L'出', L'T', L'X', L'T', 0,
+        OPT_MIDDLE, IDM_FILE_SAVE,          L'保', L'存', MY_ACCEL_CTRL, L'S', 0,
+        OPT_MIDDLE, IDM_FILE_SAVE_AS,       L'另', L'存', L'为', MY_ACCEL_CTRL_SHIFT, L'S', 0,
+        OPT_______,
+        OPT_MIDEND, IDM_FILE_EXP_TXT,       L'导', L'出', L'T', L'X', L'T', 0,
 
-        OPT_TOPLEV,                     L'灰', L'度', L'变', L'换', 0,
-        OPT_MIDDLE, IDM_GRAY_EMPI,      L'经', L'验', L'公', L'式', 0,
-        OPT_MIDDLE, IDM_GRAY_EVEN,      L'算', L'数', L'平', L'均', 0,
-        OPT_MIDDLE, IDM_GRAY_GAMMA,     L'伽', L'马', L'校', L'正', 0,
+        OPT_TOPLEV,                         L'灰', L'度', L'变', L'换', 0,
+        OPT_MIDDLE, IDM_GRAY_EMPI,          L'经', L'验', L'公', L'式', 0,
+        OPT_MIDDLE, IDM_GRAY_EVEN,          L'算', L'数', L'平', L'均', 0,
+        OPT_MIDDLE, IDM_GRAY_GAMMA,         L'伽', L'马', L'校', L'正', 0,
         OPT_______,
-        OPT_MIDDLE, IDM_GRAY_R,         L'R', L'通', L'道', 0,
-        OPT_MIDDLE, IDM_GRAY_G,         L'G', L'通', L'道', 0,
-        OPT_MIDEND, IDM_GRAY_B,         L'B', L'通', L'道', 0,
+        OPT_MIDDLE, IDM_GRAY_R,             L'R', L'通', L'道', 0,
+        OPT_MIDDLE, IDM_GRAY_G,             L'G', L'通', L'道', 0,
+        OPT_MIDDLE, IDM_GRAY_B,             L'B', L'通', L'道', 0,
+        OPT_______,
+        OPT_MIDDLE, IDM_GRAY_2xBLACK,       L'2', L'x', L'黑', L'色', L'填', L'充', 0,
+        OPT_MIDDLE, IDM_GRAY_2xMIRROR,      L'2', L'x', L'镜', L'像', L'填', L'充', 0,
+        OPT_MIDEND, IDM_GRAY_2xCOPY,        L'2', L'x', L'复', L'制', L'填', L'充', 0,
 
-        OPT_TOPLEV,                     L'卷', L'积', L'滤', L'波', 0,
-        OPT_MIDDLE, IDM_SPAF_BOX,       L'空', L'域', L'_', L'盒', L'式', L'平', L'均', 0,
-        OPT_MIDDLE, IDM_SPAF_GAUS,      L'空', L'域', L'_', L'低', L'通', L'高', L'斯', 0,
-        OPT_MIDDLE, IDM_SPAF_MEDI,      L'空', L'域', L'_', L'中', L'值', L'降', L'噪', 0,
-        OPT_MIDDLE, IDM_SPAF_LAPLACE,   L'空', L'域', L'_', L'拉', L'普', L'拉', L'斯', 0,
-        OPT_MIDDLE, IDM_SPAF_SOBEL,     L'空', L'域', L'_', L'索', L'贝', L'尔', 0,
+        OPT_TOPLEV,                         L'卷', L'积', L'滤', L'波', 0,
+        OPT_MIDDLE, IDM_SPAF_BOX,           L'空', L'域', L'_', L'盒', L'式', L'平', L'均', 0,
+        OPT_MIDDLE, IDM_SPAF_GAUS,          L'空', L'域', L'_', L'低', L'通', L'高', L'斯', 0,
+        OPT_MIDDLE, IDM_SPAF_MEDI,          L'空', L'域', L'_', L'中', L'值', L'降', L'噪', 0,
+        OPT_MIDDLE, IDM_SPAF_LAPLACE,       L'空', L'域', L'_', L'拉', L'普', L'拉', L'斯', 0,
+        OPT_MIDDLE, IDM_SPAF_SOBEL,         L'空', L'域', L'_', L'索', L'贝', L'尔', 0,
         OPT_______,
-        OPT_MIDDLE, IDM_SPAF_CUST,      L'空', L'域', L'-', L'自', L'定', L'义', L'核', 0,
+        OPT_MIDDLE, IDM_SPAF_CUST,          L'空', L'域', L'-', L'自', L'定', L'义', L'核', 0,
         OPT_______,
-        OPT_MIDDLE, IDM_SPEF_POWER,       L'频', L'域', L'_', L'功', L'率', L'谱', 0,
-        OPT_MIDDLE, IDM_SPEF_PHASE,       L'频', L'域', L'_', L'相', L'位', L'谱', 0,
+        OPT_MIDDLE, IDM_SPEF_POWER,         L'频', L'域', L'_', L'功', L'率', L'谱', 0,
+        OPT_MIDDLE, IDM_SPEF_PHASE,         L'频', L'域', L'_', L'相', L'位', L'谱', 0,
         OPT_______,
-        OPT_MIDEND, IDM_SPAF_CUST,      L'频', L'域', L'-', L'自', L'定', L'义', L'核', 0,
+        OPT_MIDDLE, IDM_SPEF_POWER_FFT,     L'频', L'域', L'_', L'功', L'率', L'谱', L'_', L'F', L'F', L'T', 0,
+        OPT_MIDDLE, IDM_SPEF_PHASE_FFT,     L'频', L'域', L'_', L'相', L'位', L'谱', L'_', L'F', L'F', L'T', 0,
+        OPT_______,
+        OPT_MIDEND, IDM_SPAF_CUST,          L'频', L'域', L'-', L'自', L'定', L'义', L'核', 0,
+
+        OPT_TOPLEV,                         L'传', L'递', L'函', L'数', 0,
+        OPT_MIDDLE, IDM_TFUNC_ILPF,         L'理', L'想', L'_', L'低', L'通', L'/', L'陷', L'波', 0,
+        OPT_MIDDLE, IDM_TFUNC_GLPF,         L'高', L'斯', L'_', L'低', L'通', L'/', L'陷', L'波', 0,
+        OPT_MIDDLE, IDM_TFUNC_BLPF,         L'巴', L'特', L'沃', L'斯', L'_', L'低', L'通', L'/', L'陷', L'波', 0,
+        OPT_______,
+        OPT_MIDDLE, IDM_TFUNC_IHPF,         L'理', L'想', L'_', L'高', L'通', L'/', L'提', L'升', 0,
+        OPT_MIDDLE, IDM_TFUNC_GHPF,         L'高', L'斯', L'_', L'高', L'通', L'/', L'提', L'升', 0,
+        OPT_MIDDLE, IDM_TFUNC_BHPF,         L'巴', L'特', L'沃', L'斯', L'_', L'高', L'通', L'/', L'提', L'升', 0,
+        OPT_______,
+        OPT_MIDEND, IDM_TFUNC_HOMO,         L'同', L'态', L'滤', L'波', L'_', L'(', L'高', L'斯', L'拟', L'合', L')', 0,
 
 #define MY_EASTER_EGG_TEXT \
 L'~', L'%', L'?', L'…', L',', L'#', L' ', L'*', L'\'', L'☆', L'&', L'℃', L'$', L'︿', L'★', L'?'
 
-        OPT_TOPEND,                     L'帮', L'助', 0,
-        OPT_MIDDLE, IDM_EASTER_EGG,     MY_EASTER_EGG_TEXT, 0,
+        OPT_TOPEND,                         L'帮', L'助', 0,
+        OPT_MIDDLE, IDM_EASTER_EGG,         MY_EASTER_EGG_TEXT, 0,
         OPT_______,
-        OPT_MIDEND, IDM_APP_ABOUT,      L'关', L'于', 0
+        OPT_MIDDLE, IDM_APP_ABOUT,          L'关', L'于', L'项', L'目', 0,
+        OPT_MIDEND, IDM_WEB_HOME,           L'使', L'用', L'手', L'册', 0,
 
 #undef MY_EASTER_EGG_TEXT
 
@@ -3154,6 +5358,22 @@ L'~', L'%', L'?', L'…', L',', L'#', L' ', L'*', L'\'', L'☆', L'&', L'℃', L
 #undef OPT_TOPLEV
     };
     return LoadMenuIndirect(MENU_TEMPLATE);
+}
+
+HACCEL myLoadMainAccel()
+{
+    // Note 'O', 'S' etc. are belong to FVIRTKEY, since the value of so called VK_O, VK_S
+    // are exactly the same with ASCII codes. For normal char key, FCONTROL wouldn't work.
+    const ACCEL ACCEL_TEMPLATE[] =
+    {
+        //  BYTE: fVirt                     WORD: key           WORD: cmd
+        {   FVIRTKEY | FCONTROL,            'O',                IDM_FILE_OPEN },
+        {   FVIRTKEY | FCONTROL,            'S',                IDM_FILE_SAVE },
+        {   FVIRTKEY | FCONTROL | FSHIFT,   'S',                IDM_FILE_SAVE_AS },
+        // Easter Egg !!!
+        {   FVIRTKEY,                       VK_CAPITAL,         IDM_EASTER_EGG }
+    };
+    return CreateAcceleratorTable((LPACCEL)&ACCEL_TEMPLATE, _countof(ACCEL_TEMPLATE));
 }
 
 UINT myValidWndCount()
@@ -3176,7 +5396,7 @@ UINT myValidWndCount()
 RECT myGetSecondWndInitSize()
 {
     RECT rc = { 0, 0,
-        ((gImage == NULL) ? 256 : gBmpInfo.nWidth) + 36 + 16 * gCharWidth,
+        ((gImage == NULL) ? 256 : gBmpInfo.nWidth) + 48 + 32 * gCharWidth,
         ((gImage == NULL) ? 256 : gBmpInfo.nHeight) + 2 * gCharHeight + 12 };
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
     return rc;
@@ -3248,30 +5468,28 @@ void myExpGammaTrans(MyBGRA* pData, MyBmpInfo* pInfo, double gamma)
     free(buffer);
 }
 
-void myEnableOperationMenus(BOOL bIsGrayScale)
+void myEnableOperationMenus()
 {
+    // General file operations.
     EnableMenuItem(gMenu, IDM_FILE_SAVE, MF_ENABLED | MF_HILITE | MF_BYCOMMAND);
     EnableMenuItem(gMenu, IDM_FILE_SAVE_AS, MF_ENABLED | MF_HILITE | MF_BYCOMMAND);
 
-    UINT nEnable = bIsGrayScale ? (MF_ENABLED | MF_HILITE) : MF_GRAYED;
-    UINT nDisable = bIsGrayScale ? MF_GRAYED : (MF_ENABLED | MF_HILITE);
-
+    // Image process operations.
     EnableMenuItem(gMenu, IDM_GRAY, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
-    // There's no need to compute grayscale for a grayscale image.
-    EnableMenuItem(gMenu, IDM_GRAY_EMPI, nDisable | MF_BYCOMMAND);
-    EnableMenuItem(gMenu, IDM_GRAY_EVEN, nDisable | MF_BYCOMMAND);
-    EnableMenuItem(gMenu, IDM_GRAY_GAMMA, nDisable | MF_BYCOMMAND);
-    // We don't support these operations for colorful image.
-    EnableMenuItem(gMenu, IDM_DOMAIN, nEnable | MF_BYPOSITION);
+    EnableMenuItem(gMenu, IDM_DOMAIN, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
+    EnableMenuItem(gMenu, IDM_TRANSFER_FUNC, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
 }
 
 void myDisableOperationMenus()
 {
+    // General file operations.
     EnableMenuItem(gMenu, IDM_FILE_SAVE, MF_GRAYED | MF_BYCOMMAND);
     EnableMenuItem(gMenu, IDM_FILE_SAVE_AS, MF_GRAYED | MF_BYCOMMAND);
 
+    // Image process operations.
     EnableMenuItem(gMenu, IDM_GRAY, MF_GRAYED | MF_BYPOSITION);
     EnableMenuItem(gMenu, IDM_DOMAIN, MF_GRAYED | MF_BYPOSITION);
+    EnableMenuItem(gMenu, IDM_TRANSFER_FUNC, MF_GRAYED | MF_BYPOSITION);
 }
 
 void myInitFileDialogInfo(HWND hwnd)
@@ -3334,7 +5552,8 @@ BOOL myIsImageGrayScale(MyBGRA* pData, MyBmpInfo* pInfo)
     return TRUE;
 }
 
-void myDisplayImage(HDC hdc, int offsetX, int offsetY, MyBGRA* pData, MyBmpInfo* pInfo)
+void myDisplayImage(HDC hdc, int offsetX, int offsetY, UINT cxValid, UINT cyValid,
+                    int imgX, int imgY, MyBGRA* pData, MyBmpInfo* pInfo)
 {
     // We only handle 32-bit true color (no color table), so INFOHEADER is enough.
     BITMAPINFOHEADER bmpih;
@@ -3353,10 +5572,10 @@ void myDisplayImage(HDC hdc, int offsetX, int offsetY, MyBGRA* pData, MyBmpInfo*
         hdc,
         offsetX, // x destination coordinate
         offsetY, // y destination coordinate
-        pInfo->nWidth, // source rectangle width
-        pInfo->nHeight, // source rectangle height
-        0, // x source coordinate
-        0, // y source coordinate
+        min(cxValid, pInfo->nWidth), // source rectangle width
+        min(cyValid, pInfo->nHeight), // source rectangle height
+        imgX, // x source coordinate
+        imgY, // y source coordinate
         0, // first scan line to draw
         pInfo->nHeight, // number of scan lines to draw
         pData, // pointer to DIB pixel bits
@@ -3706,21 +5925,22 @@ void myRegulateHistogram(MyBGRA* pData, MyBmpInfo* pInfo, double pHist[256], dou
 
 RECT myGetSpafGeneWndInitSize()
 {
-    RECT rc = { 0, 0, gBmpInfo.nWidth + 36 + 24 * gCharWidth, gBmpInfo.nHeight + 2 * gCharHeight + 12 };
+    RECT rc = { 0, 0, gBmpInfo.nWidth + 36 + 25 * gCharWidth, gBmpInfo.nHeight + 2 * gCharHeight + 12 };
     // Note this func wouldn't take WS_VSCROLL into consideration.
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
     return rc;
 }
 
-MyBGRA* myExpandMirrorImage(MyBGRA* pData, MyBmpInfo* pInfo, UINT nExpandSize)
+MyBGRA* myExpandMirrorImage(MyBGRA* pData, MyBmpInfo* pInfo, UINT xExpandSize, UINT yExpandSize)
 {
     // Make sure expand-size not greater than origin size.
-    assert(nExpandSize <= min(pInfo->nWidth, pInfo->nHeight));
+    assert(xExpandSize <= pInfo->nWidth);
+    assert(yExpandSize <= pInfo->nHeight);
 
     UINT i, j, srcIdx, dstIdx; // Declare common index variables here.
 
-    UINT nBufferWidth = pInfo->nWidth + 2 * nExpandSize;
-    UINT nBufferHeight = pInfo->nHeight + 2 * nExpandSize;
+    UINT nBufferWidth = pInfo->nWidth + 2 * xExpandSize;
+    UINT nBufferHeight = pInfo->nHeight + 2 * yExpandSize;
     UINT nBufferPixelCount = nBufferWidth * nBufferHeight;
 
     // Allocate memory for expand buffer.
@@ -3732,48 +5952,48 @@ MyBGRA* myExpandMirrorImage(MyBGRA* pData, MyBmpInfo* pInfo, UINT nExpandSize)
         for (j = 0; j < pInfo->nHeight; ++j)
         {
             srcIdx = i + j * pInfo->nWidth;
-            dstIdx = nExpandSize + i + (nExpandSize + j) * nBufferWidth;
+            dstIdx = xExpandSize + i + (yExpandSize + j) * nBufferWidth;
             buffer[dstIdx] = pData[srcIdx];
         }
 
-#define LEFT_SRC_X ( nExpandSize - i - 1 )
+#define LEFT_SRC_X ( xExpandSize - i - 1 )
 #define LEFT_DST_X ( i )
 
 #define RIGHT_SRC_X ( pInfo->nWidth - i - 1 )
-#define RIGHT_DST_X ( nExpandSize + pInfo->nWidth + i )
+#define RIGHT_DST_X ( xExpandSize + pInfo->nWidth + i )
 
-#define TOP_SRC_Y ( nExpandSize - j - 1 ) * pInfo->nWidth
+#define TOP_SRC_Y ( yExpandSize - j - 1 ) * pInfo->nWidth
 #define TOP_DST_Y ( j * nBufferWidth )
 
 #define BOTTOM_SRC_Y ( pInfo->nHeight - j - 1 ) * pInfo->nWidth
-#define BOTTOM_DST_Y ( (nExpandSize + pInfo->nHeight + j) * nBufferWidth )
+#define BOTTOM_DST_Y ( (yExpandSize + pInfo->nHeight + j) * nBufferWidth )
 
-    for (i = 0; i < nExpandSize; ++i)
+    for (i = 0; i < xExpandSize; ++i)
         for (j = 0; j < pInfo->nHeight; ++j)
         {
             // Left Border
             srcIdx = LEFT_SRC_X + j * pInfo->nWidth;
-            dstIdx = LEFT_DST_X + (nExpandSize + j) * nBufferWidth;
+            dstIdx = LEFT_DST_X + (yExpandSize + j) * nBufferWidth;
             buffer[dstIdx] = pData[srcIdx];
             // Right Border
             srcIdx = RIGHT_SRC_X + j * pInfo->nWidth;
-            dstIdx = RIGHT_DST_X + (nExpandSize + j) * nBufferWidth;
+            dstIdx = RIGHT_DST_X + (yExpandSize + j) * nBufferWidth;
             buffer[dstIdx] = pData[srcIdx];
         }
     for (i = 0; i < pInfo->nWidth; ++i)
-        for (j = 0; j < nExpandSize; ++j)
+        for (j = 0; j < yExpandSize; ++j)
         {
             // Top Border
             srcIdx = i + TOP_SRC_Y;
-            dstIdx = (nExpandSize + i) + TOP_DST_Y;
+            dstIdx = (xExpandSize + i) + TOP_DST_Y;
             buffer[dstIdx] = pData[srcIdx];
             // Bottom Border
             srcIdx = i + BOTTOM_SRC_Y;
-            dstIdx = (nExpandSize + i) + BOTTOM_DST_Y;
+            dstIdx = (xExpandSize + i) + BOTTOM_DST_Y;
             buffer[dstIdx] = pData[srcIdx];
         }
-    for (i = 0; i < nExpandSize; ++i)
-        for (j = 0; j < nExpandSize; ++j)
+    for (i = 0; i < xExpandSize; ++i)
+        for (j = 0; j < yExpandSize; ++j)
         {
             // Left Top Corner
             srcIdx = LEFT_SRC_X + TOP_SRC_Y;
@@ -3803,6 +6023,118 @@ MyBGRA* myExpandMirrorImage(MyBGRA* pData, MyBmpInfo* pInfo, UINT nExpandSize)
 #undef BOTTOM_DST_Y
 
     return buffer;
+}
+
+MyBGRA* myExpand2xBlackImage(MyBGRA* pData, MyBmpInfo* pInfo)
+{
+    UINT i, j, srcIdx, dstIdx; // Declare common index variables here.
+
+    // Prepare helper variables.
+    UINT _2xWidth = 2 * pInfo->nWidth,
+         _2xHeight = 2 * pInfo->nHeight;
+
+    // Allocate 2x image.
+    size_t nByteSize = _2xWidth * _2xHeight * sizeof(MyBGRA);
+    MyBGRA* result = (MyBGRA*)malloc(nByteSize);
+    myAssert(result);
+    // Populate new pixels as black.
+    ZeroMemory(result, nByteSize);
+
+    // Copy source image data.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            srcIdx = i + j * pInfo->nWidth;
+            // Note the Y-axis is flipped to disply, so use [j + pInfo->nHeight].
+            dstIdx = i + (j + pInfo->nHeight) * _2xWidth;
+            result[dstIdx] = pData[srcIdx];
+        }
+
+    return result;
+}
+
+MyBGRA* myExpand2xMirrorImage(MyBGRA* pData, MyBmpInfo* pInfo)
+{
+    // Prepare helper variables.
+    UINT _2xWidth = 2 * pInfo->nWidth,
+         _2xHeight = 2 * pInfo->nHeight;
+
+    UINT _3xWidth = _2xWidth + pInfo->nWidth;
+
+    // Allocate 2x image.
+    MyBGRA* result = (MyBGRA*)malloc(_2xWidth * _2xHeight * sizeof(MyBGRA));
+    myAssert(result);
+
+    // Create 3x mirrored image.
+    MyBGRA* intermidiate = myExpandMirrorImage(pData, pInfo, pInfo->nWidth, pInfo->nHeight);
+    myAssert(intermidiate);
+
+    // Clip 3x mirrored image to 2x subarea image.
+    for (UINT i = 0; i < _2xWidth; ++i)
+        for (UINT j = 0; j < _2xHeight; ++j)
+        {
+            UINT _2xIdx = i + j * _2xWidth;
+            // Note the Y-axis is flipped to disply, so use [j * _3xWidth].
+            UINT _4xIdx = (i + pInfo->nWidth) + j * _3xWidth;
+            // Copy from mirrored data.
+            result[_2xIdx] = intermidiate[_4xIdx];
+        }
+
+    // Note we have allocated memory for 3x image data.
+    free(intermidiate);
+
+    return result;
+}
+
+MyBGRA* myExpand2xCopyImage(MyBGRA* pData, MyBmpInfo* pInfo)
+{
+    UINT i, j, srcIdx, dstIdx; // Declare common index variables here.
+
+    // Prepare helper variables.
+    UINT _2xWidth = 2 * pInfo->nWidth,
+         _2xHeight = 2 * pInfo->nHeight;
+
+    // Allocate 2x image.
+    size_t nByteSize = _2xWidth * _2xHeight * sizeof(MyBGRA);
+    MyBGRA* result = (MyBGRA*)malloc(nByteSize);
+    myAssert(result);
+    // We have to do this since the right bottom pixels woundn't be populated later.
+    ZeroMemory(result, nByteSize);
+
+    // Copy source image data.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            srcIdx = i + j * pInfo->nWidth;
+            // Note the Y-axis is flipped to disply, so use [j + pInfo->nHeight].
+            dstIdx = i + (j + pInfo->nHeight) * _2xWidth;
+            result[dstIdx] = pData[srcIdx];
+        }
+    // Populate new pixels as boundary color.
+    for (i = 0; i < pInfo->nWidth; ++i)
+    {
+        // Bottom Boundary
+        srcIdx = i;
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            // @remark, Y-axis is flipped to display.
+            dstIdx = i + j * _2xWidth;
+            result[dstIdx] = pData[srcIdx];
+        }
+    }
+    for (j = 0; j < pInfo->nHeight; ++j)
+    {
+        // Right Boundary
+        srcIdx = pInfo->nWidth - 1 + j * pInfo->nWidth;
+        for (i = pInfo->nWidth; i < _2xWidth; ++i)
+        {
+            // @remark, Y-axis is flipped to display.
+            dstIdx = i + (j + pInfo->nHeight) * _2xWidth;
+            result[dstIdx] = pData[srcIdx];
+        }
+    }
+
+    return result;
 }
 
 /*
@@ -4189,7 +6521,7 @@ void myDomainSobelFilter(MY_FILTER_FUNC_PARAMS)
 void mycpDFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre)
 {
     // Prepare helper variables.
-    long double _2pi = -6.283185;
+    long double _2pi = -6.283185L;
 
     for (UINT f = 0; f < L; ++f)
     {
@@ -4212,7 +6544,8 @@ void mycpDFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre)
 void mycpIDFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre)
 {
     // Prepare helper variables.
-    long double twopi = 6.283185;
+    long double twopi = 6.283185L;
+    long double recpL = 1.0L / L;
 
     for (UINT t = 0; t < L; ++t)
     {
@@ -4229,17 +6562,304 @@ void mycpIDFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre)
             // sum of items
             mycpAddInPlace(pDst + dstIdx, &item, pDst + dstIdx);
         }
+        // normalize, 1 / L
+        mycpMulScalarInPlace(recpL, pDst + dstIdx, pDst + dstIdx);
     }
 }
 
-void mycpFFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre)
+UINT myGetRadix2(UINT num)
 {
-    // TODO: implement 1-Dimension FFT.
+    for (UINT i = 0; i < sizeof(UINT) * 8; ++i)
+    {
+        if ((0x01 << i) >= num)
+        {
+            return i;
+        }
+    }
+    return UINT_MAX;
 }
 
-void mycpIFFT(MyComplex* pDst, MyComplex* pSrc, UINT L, UINT incre)
+void mycpFFT(MyComplex* pData, UINT R, UINT incre)
 {
-    // TODO: implement 1-Dimension IFFT.
+    // We keep the twiddle factor array as static; there's no need to recalculate
+    // the factors repeatedly if [N] equals [originN], which would save some time.
+    static UINT originRadix = 0u;
+    static UINT originLength = 0u;
+    static UINT nFactorCount = 0u;
+    static MyComplex* WN = NULL; // twiddle factors
+
+    // Height of each butterfly unit.
+    static UINT nBtfyDist = 0u;
+    // Distance between the headers of 2 adjacent butterfly units.
+    // This is always equals to [nBtfyDist * 2] or [nBtfyDist << 1].
+    static UINT nBtfyInterGap = 0u;
+
+    static UINT wnidx = 0u; // current twiddle factor index
+    static MyComplex* wnptr = NULL; // points to current WN
+
+    // Declare common index variables here.
+    static UINT i, j, k, idx, idx2;
+
+    // Prepare helper variables.
+    static long double _2pi = -6.283185L;
+    static MyComplex* x = NULL, * xp = NULL; // p: peer
+    static MyComplex temp = {0,0}; // temp intermidiate
+
+    UINT N = (1 << R);
+    // Do nothing for empty/single array.
+    if (N <= 1) return;
+
+    // Check whether need to recalculate twiddle factors.
+    if (N != originLength)
+    {
+        originRadix = R;
+        originLength = N;
+        nFactorCount = N >> 1; // N / 2
+
+        // 2-dot FFT doesn't need twiddle factor.
+        if (nFactorCount != 1)
+        {
+            if (WN != NULL) free(WN);
+            // Allocate memory for twiddle factors.
+            WN = (MyComplex*)malloc(nFactorCount * sizeof(MyComplex));
+            myAssert(WN);
+
+            long double _2pi_N = _2pi / N;
+            // Calculate and store twiddle factors.
+            for (i = 0; i < nFactorCount; ++i)
+            {
+                mycpEjInPlace(_2pi_N * i, WN + i);
+            }
+        }
+    }
+
+    // Calculate butterfly operation units of FFT.
+    nBtfyDist = N;
+    wnidx = 1; // WN_1
+    // For each decimation level:
+    for (i = 0; i < R; ++i)
+    {
+        nBtfyInterGap = nBtfyDist;
+        nBtfyDist >>= 1; // nBtfyDist / 2
+
+        // Part 1:
+        // The 1st butterfly operation never needs twiddle factor,
+        // since it is always multiplied by WN_0, i.e. e^(j0) = 1.
+        for (j = 0; j < N; j += nBtfyInterGap)
+        {
+            x = pData + j * incre;
+            xp = x + nBtfyDist * incre;
+
+            // y = x + xp
+            mycpAddInPlace(x, xp, &temp);
+            // yp = x - xp
+            mycpSubInPlace(x, xp, xp);
+
+            (*x) = temp; // avoid overwrite
+        }
+
+        // Part 2:
+        // The remained butterfly units always need twiddle factors.
+        wnptr = WN + wnidx;
+        // For different twiddle factor groups ......
+        for (j = 1; j < nBtfyDist; ++j)
+        {
+            // For those with the same twiddle factors ......
+            for (k = j; k < N; k += nBtfyInterGap)
+            {
+                x = pData + k * incre;
+                xp = x + nBtfyDist * incre;
+
+                // y = x + xp
+                mycpAddInPlace(x, xp, &temp);
+                // yp = (x - xp) * WN
+                mycpSubInPlace(x, xp, x);
+                mycpMulInPlace(x, wnptr, xp);
+
+                (*x) = temp; // avoid overwrite
+            }
+            wnptr += wnidx;
+        }
+        wnidx <<= 1; // wnidx * 2
+    }
+
+    // Rearrange results by bit reversing.
+    // For example, for 8-dot FFT of (radix 2) frequency decimation:
+    // 
+    // x(t)    bit reverse  X(f)
+    // 0, 000   -------->   0, 000
+    // 1, 001   -------->   4, 100
+    // 2, 010   -------->   2, 010
+    // 3, 011   -------->   6, 110
+    // 4, 100   -------->   1, 001
+    // 5, 101   -------->   5, 101
+    // 6, 110   -------->   3, 011
+    // 7, 111  --------->   7, 111
+    //
+    for (i = 0; i < N; ++i)
+    {
+        k = 0;
+        idx = i * incre;
+        // Get reversed number.
+        for (j = 0; j < R; ++j)
+        {
+            k = (k << 1) | (0x01 & (i >> j));
+        }
+        // Swap if found.
+        if (i < k)
+        {
+            idx2 = k * incre;
+            temp = pData[idx];
+            pData[idx] = pData[idx2];
+            pData[idx2] = temp;
+        }
+    }
+}
+
+void mycpIFFT(MyComplex* pData, UINT R, UINT incre)
+{
+    // We keep the twiddle factor array as static; there's no need to recalculate
+    // the factors repeatedly if [N] equals [originN], which would save some time.
+    static UINT originRadix = 0u;
+    static UINT originLength = 0u;
+    static UINT nFactorCount = 0u;
+    static MyComplex* WN = NULL; // twiddle factors
+
+    // Height of each butterfly unit.
+    static UINT nBtfyDist = 0u;
+    // Distance between the headers of 2 adjacent butterfly units.
+    // This is always equals to [nBtfyDist * 2] or [nBtfyDist << 1].
+    static UINT nBtfyInterGap = 0u;
+
+    static UINT wnidx = 0u; // current twiddle factor index
+    static MyComplex* wnptr = NULL; // points to current WN
+
+    // Declare common index variables here.
+    static UINT i, j, k, idx, idx2;
+
+    // Prepare helper variables.
+    static long double twopi = 6.283185L;
+    static MyComplex* x = NULL, * xp = NULL; // p: peer
+    static MyComplex temp = {0,0}; // temp intermidiate
+    static long double dNormCoef = 0; // set to [1 / N]
+
+    UINT N = (1 << R);
+    // Do nothing for empty/single array.
+    if (N <= 1) return;
+
+    // Check whether need to recalculate twiddle factors.
+    if (N != originLength)
+    {
+        originRadix = R;
+        originLength = N;
+        nFactorCount = N >> 1; // N / 2
+
+        // 2-dot FFT doesn't need twiddle factor.
+        if (nFactorCount != 1)
+        {
+            if (WN != NULL) free(WN);
+            // Allocate memory for twiddle factors.
+            WN = (MyComplex*)malloc(nFactorCount * sizeof(MyComplex));
+            myAssert(WN);
+
+            long double twopi_N = twopi / N;
+            // Calculate and store twiddle factors.
+            for (i = 0; i < nFactorCount; ++i)
+            {
+                mycpEjInPlace(twopi_N * i, WN + i);
+            }
+        }
+    }
+
+    // Calculate butterfly operation units of FFT.
+    nBtfyDist = N;
+    wnidx = 1; // WN_1
+    // For each decimation level:
+    for (i = 0; i < R; ++i)
+    {
+        nBtfyInterGap = nBtfyDist;
+        nBtfyDist >>= 1; // nBtfyDist / 2
+
+        // Part 1:
+        // The 1st butterfly operation never needs twiddle factor,
+        // since it is always multiplied by WN_0, i.e. e^(j0) = 1.
+        for (j = 0; j < N; j += nBtfyInterGap)
+        {
+            x = pData + j * incre;
+            xp = x + nBtfyDist * incre;
+
+            // y = x + xp
+            mycpAddInPlace(x, xp, &temp);
+            // yp = x - xp
+            mycpSubInPlace(x, xp, xp);
+
+            (*x) = temp; // avoid overwrite
+        }
+
+        // Part 2:
+        // The remained butterfly units always need twiddle factors.
+        wnptr = WN + wnidx;
+        // For different twiddle factor groups ......
+        for (j = 1; j < nBtfyDist; ++j)
+        {
+            // For those with the same twiddle factors ......
+            for (k = j; k < N; k += nBtfyInterGap)
+            {
+                x = pData + k * incre;
+                xp = x + nBtfyDist * incre;
+
+                // y = x + xp
+                mycpAddInPlace(x, xp, &temp);
+                // yp = (x - xp) * WN
+                mycpSubInPlace(x, xp, x);
+                mycpMulInPlace(x, wnptr, xp);
+
+                (*x) = temp; // avoid overwrite
+            }
+            wnptr += wnidx;
+        }
+        wnidx <<= 1; // wnidx * 2
+    }
+
+    // Rearrange results by bit reversing.
+    // For example, for 8-dot FFT of (radix 2) frequency decimation:
+    // 
+    // x(t)    bit reverse  X(f)
+    // 0, 000   -------->   0, 000
+    // 1, 001   -------->   4, 100
+    // 2, 010   -------->   2, 010
+    // 3, 011   -------->   6, 110
+    // 4, 100   -------->   1, 001
+    // 5, 101   -------->   5, 101
+    // 6, 110   -------->   3, 011
+    // 7, 111  --------->   7, 111
+    //
+    for (i = 0; i < N; ++i)
+    {
+        k = 0;
+        idx = i * incre;
+        // Get reversed number.
+        for (j = 0; j < R; ++j)
+        {
+            k = (k << 1) | (0x01 & (i >> j));
+        }
+        // Swap if found.
+        if (i < k)
+        {
+            idx2 = k * incre;
+            temp = pData[idx];
+            pData[idx] = pData[idx2];
+            pData[idx2] = temp;
+        }
+    }
+    
+    dNormCoef = 1.0L / N;
+    // Normalize results with dot count.
+    for (i = 0; i < N; ++i)
+    {
+        idx = i * incre;
+        mycpMulScalarInPlace(dNormCoef, pData + idx, pData + idx);
+    }
 }
 
 MyComplex* mycpDFT2(MyComplex* pData, UINT M, UINT N)
@@ -4300,31 +6920,88 @@ MyComplex* mycpIDFT2(MyComplex* pData, UINT M, UINT N)
     return buffer;
 }
 
-MyComplex* mycpFFT2(MyComplex* pData, UINT M, UINT N)
+MyComplex* mycpFFT2(MyComplex* pData, UINT M, UINT RM, UINT N, UINT RN)
 {
-    // TODO: implement 2-Dimension FFT.
-    return NULL;
+    size_t nByteSize = M * N * sizeof(MyComplex);
+    // Allocate transformed results buffer.
+    MyComplex* buffer = (MyComplex*)malloc(nByteSize);
+    myAssert(buffer);
+    // We have to copy origin data to result buffer in advance
+    // since FFT will calculate results in place step by step.
+    memcpy(buffer, pData, nByteSize);
+
+    //--------------------------------------------------------------- Horizontal
+    for (UINT u = 0; u < M; ++u)
+    {
+        UINT incre = u;
+        mycpFFT(buffer + incre, RN, M);
+    }
+    //--------------------------------------------------------------- Vertical
+    for (UINT v = 0; v < N; ++v)
+    {
+        UINT incre = v * M;
+        mycpFFT(buffer + incre, RM, 1);
+    }
+
+    return buffer;
 }
 
-MyComplex* mycpIFFT2(MyComplex* pData, UINT M, UINT N)
+MyComplex* mycpIFFT2(MyComplex* pData, UINT M, UINT RM, UINT N, UINT RN)
 {
-    // TODO: implement 2-Dimension IFFT.
-    return NULL;
+    size_t nByteSize = M * N * sizeof(MyComplex);
+    // Allocate transformed results buffer.
+    MyComplex* buffer = (MyComplex*)malloc(nByteSize);
+    myAssert(buffer);
+    // We have to copy origin data to result buffer in advance
+    // since FFT will calculate results in place step by step.
+    memcpy(buffer, pData, nByteSize);
+
+    //--------------------------------------------------------------- Horizontal
+    for (UINT u = 0; u < M; ++u)
+    {
+        UINT incre = u;
+        mycpIFFT(buffer + incre, RN, M);
+    }
+    //--------------------------------------------------------------- Vertical
+    for (UINT v = 0; v < N; ++v)
+    {
+        UINT incre = v * M;
+        mycpIFFT(buffer + incre, RM, 1);
+    }
+
+    return buffer;
 }
 
 void mycpLogarithmTrans(MyBGRA* pDst, MyComplex* pSrc, UINT M, UINT N, long double c)
 {
     UINT i, j, idx; // Declare common index variables here.
 
+    // We must allocate an extra intermidiate buffer to keep pSrc constant.
+    long double* buffer = (long double*)malloc(M * N * sizeof(long double));
+    myAssert(buffer);
+
     long double tmpMin = LDBL_MAX, tmpMax = LDBL_MIN;
+    // Find min, max values.
     for (i = 0; i < M; ++i)
         for (j = 0; j < N; ++j)
         {
             idx = i + j * M;
-            pSrc[idx].real = c * log(1 + pSrc[idx].real);
             // Update min, max values.
             tmpMin = min(tmpMin, pSrc[idx].real);
             tmpMax = max(tmpMax, pSrc[idx].real);
+        }
+
+    long double logMin = tmpMin;
+    tmpMin = LDBL_MAX; tmpMax = LDBL_MIN;
+    // Calculate logarithm transform.
+    for (i = 0; i < M; ++i)
+        for (j = 0; j < N; ++j)
+        {
+            idx = i + j * M;
+            buffer[idx] = c * log(1 + (pSrc[idx].real - logMin));
+            // Update min, max values.
+            tmpMin = min(tmpMin, buffer[idx]);
+            tmpMax = max(tmpMax, buffer[idx]);
         }
 
     tmpMax -= tmpMin;
@@ -4333,12 +7010,15 @@ void mycpLogarithmTrans(MyBGRA* pDst, MyComplex* pSrc, UINT M, UINT N, long doub
         for (j = 0; j < N; ++j)
         {
             idx = i + j * M;
-            pSrc[idx].real = 255 * ((pSrc[idx].real - tmpMin) / tmpMax);
-            pDst[idx].R = pDst[idx].G = pDst[idx].B = (UINT8)min(255, max(0, pSrc[idx].real));
+            buffer[idx] = 255 * ((buffer[idx] - tmpMin) / tmpMax);
+            pDst[idx].R = pDst[idx].G = pDst[idx].B = (UINT8)min(255, max(0, buffer[idx]));
         }
+
+    // Note we have allocated memory for intermidate buffer.
+    free(buffer);
 }
 
-void myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam)
+MyComplex* myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam)
 {
     UINT i, j, idx; // Declare common index variables here.
 
@@ -4369,12 +7049,50 @@ void myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double d
     // Convert complex to RGB.
     mycpLogarithmTrans(pDst, result, pInfo->nWidth, pInfo->nHeight, dLogParam);
     
-    free(result);
     // Note we have allocated memory for complex buffer data.
     free(buffer);
+
+    return result;
 }
 
-void myPhaseSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam)
+MyComplex* myPowerSpectralFFT(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT RM, UINT RN, long double dLogParam)
+{
+    UINT i, j, idx; // Declare common index variables here.
+
+    // Allocate memory for intermidiate complex buffer.
+    MyComplex* buffer = (MyComplex*)malloc(pInfo->nWidth * pInfo->nHeight * sizeof(MyComplex));
+    myAssert(buffer);
+    // Initialize complex buffer.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            // Apply (-1)^(x+y).
+            buffer[idx].real = ((i + j) % 2 == 0) ? pSrc[idx].R : (-pSrc[idx].R);
+            buffer[idx].imag = 0; // real number
+        }
+
+    // Calculate FFT.
+    MyComplex* result = mycpFFT2(buffer, pInfo->nWidth, RM, pInfo->nHeight, RN);
+    // Convert to power-spectral.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            // Store power in real part to match the logarithm later.
+            result[idx].real = mycpMagnitude2(result + idx);
+        }
+
+    // Convert complex to RGB.
+    mycpLogarithmTrans(pDst, result, pInfo->nWidth, pInfo->nHeight, dLogParam);
+
+    // Note we have allocated memory for complex buffer data.
+    free(buffer);
+
+    return result;
+}
+
+MyComplex* myPhaseSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam)
 {
     UINT i, j, idx; // Declare common index variables here.
 
@@ -4405,9 +7123,304 @@ void myPhaseSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double d
     // Convert complex to RGB.
     mycpLogarithmTrans(pDst, result, pInfo->nWidth, pInfo->nHeight, dLogParam);
 
-    free(result);
     // Note we have allocated memory for complex buffer data.
     free(buffer);
+
+    return result;
+}
+
+MyComplex* myPhaseSpectralFFT(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT RM, UINT RN, long double dLogParam)
+{
+    UINT i, j, idx; // Declare common index variables here.
+
+    // Allocate memory for intermidiate complex buffer.
+    MyComplex* buffer = (MyComplex*)malloc(pInfo->nWidth * pInfo->nHeight * sizeof(MyComplex));
+    myAssert(buffer);
+    // Initialize complex buffer.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            // Apply (-1)^(x+y).
+            buffer[idx].real = ((i + j) % 2 == 0) ? pSrc[idx].R : (-pSrc[idx].R);
+            buffer[idx].imag = 0; // real number
+        }
+
+    // Calculate FFT.
+    MyComplex* result = mycpFFT2(buffer, pInfo->nWidth, RM, pInfo->nHeight, RN);
+    // Convert to phase-spectral.
+    for (i = 0; i < pInfo->nWidth; ++i)
+        for (j = 0; j < pInfo->nHeight; ++j)
+        {
+            idx = i + j * pInfo->nWidth;
+            // Store phase in real part to match the logarithm later.
+            result[idx].real = mycpPhase(result + idx);
+        }
+
+    // Convert complex to RGB.
+    mycpLogarithmTrans(pDst, result, pInfo->nWidth, pInfo->nHeight, dLogParam);
+
+    // Note we have allocated memory for complex buffer data.
+    free(buffer);
+
+    return result;
+}
+
+void mySpectralReconstruct(MyBGRA* dst, MyBmpInfo* info, MyComplex* power, MyComplex* phase)
+{
+    UINT i, j, idx; // Declare common index variables here.
+
+    MyComplex* buffer = (MyComplex*)malloc(info->nWidth * info->nHeight * sizeof(MyComplex));
+    myAssert(buffer);
+
+    long double magnitude;
+    // Rebuild freq-spectral.
+    for (i = 0; i < info->nWidth; ++i)
+        for (j = 0; j < info->nHeight; ++j)
+        {
+            idx = i + j * info->nWidth;
+            magnitude = sqrt(power[idx].real);
+            buffer[idx].real = magnitude * cos(phase[idx].real);
+            buffer[idx].imag = magnitude * sin(phase[idx].real);
+        }
+
+    // From freq-domain to space-domain.
+    MyComplex* img = mycpIDFT2(buffer, info->nWidth, info->nHeight);
+
+    // Clamp to 0 ~ 255.
+    for (i = 0; i < info->nWidth; ++i)
+        for (j = 0; j < info->nHeight; ++j)
+        {
+            idx = i + j * info->nWidth;
+            dst[idx].R = dst[idx].G = dst[idx].B = (UINT8)min(255, max(0, abs((int)img[idx].real)));
+        }
+
+    free(buffer);
+    // Note we have allocated memory for rebuilt image data.
+    free(img);
+}
+
+void mySpectralReconstructFFT(MyBGRA* dst, MyBmpInfo* info, UINT RM, UINT RN, MyComplex* power, MyComplex* phase)
+{
+    UINT i, j, idx; // Declare common index variables here.
+
+    MyComplex* buffer = (MyComplex*)malloc(info->nWidth * info->nHeight * sizeof(MyComplex));
+    myAssert(buffer);
+
+    long double magnitude;
+    // Rebuild freq-spectral.
+    for (i = 0; i < info->nWidth; ++i)
+        for (j = 0; j < info->nHeight; ++j)
+        {
+            idx = i + j * info->nWidth;
+            magnitude = sqrt(power[idx].real);
+            buffer[idx].real = magnitude * cos(phase[idx].real);
+            buffer[idx].imag = magnitude * sin(phase[idx].real);
+        }
+
+    // From freq-domain to space-domain.
+    MyComplex* img = mycpIFFT2(buffer, info->nWidth, RM, info->nHeight, RN);
+
+    // Clamp to 0 ~ 255.
+    for (i = 0; i < info->nWidth; ++i)
+        for (j = 0; j < info->nHeight; ++j)
+        {
+            idx = i + j * info->nWidth;
+            dst[idx].R = dst[idx].G = dst[idx].B = (UINT8)min(255, max(0, abs((int)img[idx].real)));
+        }
+
+    free(buffer);
+    // Note we have allocated memory for rebuilt image data.
+    free(img);
+}
+
+MyBGRA* myPaddingZeroImageFFT(MyBmpInfo* info, MyBGRA* origin, MyBmpInfo* originInfo)
+{
+    // Get expanded size info.
+    info->nWidth = 1 << myGetRadix2(originInfo->nWidth);
+    info->nHeight = 1 << myGetRadix2(originInfo->nHeight);
+
+    size_t nByteSize = info->nWidth * info->nHeight * sizeof(MyBGRA);
+    // Allocate expanded image data.
+    MyBGRA* img = (MyBGRA*)malloc(nByteSize);
+    myAssert(img);
+    // Padding zeros.
+    ZeroMemory(img, nByteSize);
+
+    // Copy origin image data.
+    for (UINT i = 0; i < originInfo->nWidth; ++i)
+        for (UINT j = 0; j < originInfo->nHeight; ++j)
+            img[i + j * info->nWidth] = origin[i + j * originInfo->nWidth];
+
+    return img;
+}
+
+MyComplex* myPaddingZeroSpectralFFT(MyComplex* origin, MyBmpInfo* originInfo)
+{
+    // Get expanded size info.
+    UINT tmpW = 1 << myGetRadix2(originInfo->nWidth);
+    UINT tmpH = 1 << myGetRadix2(originInfo->nHeight);
+
+    size_t nByteSize = tmpW * tmpH * sizeof(MyComplex);
+    // Allocate expanded spectral data.
+    MyComplex* sptl = (MyComplex*)malloc(nByteSize);
+    myAssert(sptl);
+    // Padding zeros.
+    ZeroMemory(sptl, nByteSize);
+
+    // Copy origin spectral data.
+    for (UINT i = 0; i < originInfo->nWidth; ++i)
+        for (UINT j = 0; j < originInfo->nHeight; ++j)
+            sptl[i + j * tmpW] = origin[i + j * originInfo->nWidth];
+
+    return sptl;
+}
+
+void myTfuncIdealLPF(MyComplex* spectral, MyBmpInfo* info, POINT* center, double* radius, UINT nFilterCount)
+{
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            UINT idx = i + j * info->nWidth;
+            for (UINT k = 0; k < nFilterCount; ++k)
+            {
+                if ((i - center[k].x) * (i - center[k].x) + // out of low pass area
+                    (j - center[k].y) * (j - center[k].y) > radius[k] * radius[k])
+                {
+                    spectral[idx].real = 0; // clear magnitude
+                    break; // no need to check remaining filters
+                }
+            }
+        }
+}
+
+void myTfuncIdealHPF(MyComplex* spectral, MyBmpInfo* info, POINT* center, double* radius, UINT nFilterCount)
+{
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            UINT idx = i + j * info->nWidth;
+            for (UINT k = 0; k < nFilterCount; ++k)
+            {
+                if ((i - center[k].x) * (i - center[k].x) + // out of high pass area
+                    (j - center[k].y) * (j - center[k].y) < radius[k] * radius[k])
+                {
+                    spectral[idx].real = 0; // clear magnitude
+                    break; // no need to check remaining filters
+                }
+            }
+        }
+}
+
+void myTfuncGaussianLPF(MyComplex* spectral, MyBmpInfo* info, POINT* center, double* sigma, UINT nFilterCount)
+{
+    // Prepare helper variables.
+    const static double E = 2.71828;
+    double* _twosigma2 = (double*)malloc(nFilterCount * sizeof(double));
+    myAssert(_twosigma2);
+    for (int s = 0; s < nFilterCount; ++s) _twosigma2[s] = -1 / (2 * sigma[s] * sigma[s]);
+
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            UINT idx = i + j * info->nWidth;
+            for (UINT k = 0; k < nFilterCount; ++k)
+            {
+                double D2 = (i - center[k].x) * (i - center[k].x) +
+                            (j - center[k].y) * (j - center[k].y);
+                // Apply all gaussian coefficients in sequence.
+                spectral[idx].real *= pow(E, D2 * _twosigma2[k]);
+            }
+        }
+
+    // Note we have allocated memory for helper data.
+    free(_twosigma2);
+}
+
+void myTfuncGaussianHPF(MyComplex* spectral, MyBmpInfo* info, POINT* center, double* sigma, UINT nFilterCount)
+{
+    // Prepare helper variables.
+    const static double E = 2.71828;
+    double* _twosigma2 = (double*)malloc(nFilterCount * sizeof(double));
+    myAssert(_twosigma2);
+    for (int s = 0; s < nFilterCount; ++s) _twosigma2[s] = -1 / (2 * sigma[s] * sigma[s]);
+
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            UINT idx = i + j * info->nWidth;
+            for (UINT k = 0; k < nFilterCount; ++k)
+            {
+                double D2 = (i - center[k].x) * (i - center[k].x) +
+                    (j - center[k].y) * (j - center[k].y);
+                // Apply all gaussian coefficients in sequence.
+                spectral[idx].real *= (1 - pow(E, D2 * _twosigma2[k]));
+            }
+        }
+
+    // Note we have allocated memory for helper data.
+    free(_twosigma2);
+}
+
+void myTfuncButterworthLPF(MyComplex* spectral, MyBmpInfo* info,
+                           POINT* center, double* cutoff, double nOrder, UINT nFilterCount)
+{
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            UINT idx = i + j * info->nWidth;
+            for (UINT k = 0; k < nFilterCount; ++k)
+            {
+                double D2 = (i - center[k].x) * (i - center[k].x) +
+                            (j - center[k].y) * (j - center[k].y);
+                // Apply all butterworth coefficients in sequence.
+                spectral[idx].real *= 1 / (1 + pow(D2 / (cutoff[k] * cutoff[k]), nOrder));
+            }
+        }
+}
+
+void myTfuncButterworthHPF(MyComplex* spectral, MyBmpInfo* info,
+                           POINT* center, double* cutoff, double nOrder, UINT nFilterCount)
+{
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            UINT idx = i + j * info->nWidth;
+            for (UINT k = 0; k < nFilterCount; ++k)
+            {
+                double D2 = (i - center[k].x) * (i - center[k].x) +
+                    (j - center[k].y) * (j - center[k].y);
+                // Apply all butterworth coefficients in sequence.
+                spectral[idx].real *= 1 / (1 + pow((cutoff[k] * cutoff[k]) / D2, nOrder));
+            }
+        }
+}
+
+void myTfuncHomomorphicFilter(MyComplex* spectral, MyBmpInfo* info, POINT* center, double* sigma,
+                              double c, double gammaLow, double gammaHigh, UINT nFilterCount)
+{
+    // Prepare helper variables.
+    const static double E = 2.71828;
+    double gammaDiff = gammaHigh - gammaLow;
+    double* _csigma2 = (double*)malloc(nFilterCount * sizeof(double));
+    myAssert(_csigma2);
+    for (int s = 0; s < nFilterCount; ++s) _csigma2[s] = -c / (2 * sigma[s] * sigma[s]);
+
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            UINT idx = i + j * info->nWidth;
+            for (UINT k = 0; k < nFilterCount; ++k)
+            {
+                double D2 = (i - center[k].x) * (i - center[k].x) +
+                            (j - center[k].y) * (j - center[k].y);
+                // Apply all homomorphic filter coefficients in sequence.
+                spectral[idx].real *= (gammaDiff * (1 - pow(E, D2 * _csigma2[k])) + gammaLow);
+            }
+        }
+
+    // Note we have allocated memory for helper data.
+    free(_csigma2);
 }
 
 //#################################################################################################

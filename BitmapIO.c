@@ -65,9 +65,15 @@ MyBGRA* myReadBmp(PCWSTR szFileName, MyBmpInfo* pInfo)
     myMemRead(PTR_SIZE_ARG(bmpfh));
     myMemRead(PTR_SIZE_ARG(bmpih));
 
+    // BM, Windows
+    if (bmpfh.bfType != 0x4D42) return NULL;
+
     pInfo->nWidth = bmpih.biWidth;
     // BMP's height can be negative, which means the image is flipped.
     pInfo->nHeight = abs(bmpih.biHeight);
+
+    // We don't support image with too large size.
+    if (max(pInfo->nWidth, pInfo->nHeight) > 65536) return NULL;
 
     // Allocate memory for pixel data.
     size_t nPixelCount = pInfo->nWidth * pInfo->nHeight;
