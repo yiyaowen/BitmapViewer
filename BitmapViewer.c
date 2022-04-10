@@ -7282,13 +7282,16 @@ void myTfuncIdealLPF(MyComplex* spectral, MyBmpInfo* info, POINT* center, double
         for (UINT j = 0; j < info->nHeight; ++j)
         {
             UINT idx = i + j * info->nWidth;
+
+            long double tmpMag = spectral[idx].real;
+            spectral[idx].real = 0; // wait for check
+
             for (UINT k = 0; k < nFilterCount; ++k)
             {
-                if ((i - center[k].x) * (i - center[k].x) + // out of low pass area
-                    (j - center[k].y) * (j - center[k].y) > radius[k] * radius[k])
+                if ((i - center[k].x) * (i - center[k].x) + // within low pass area
+                    (j - center[k].y) * (j - center[k].y) < radius[k] * radius[k])
                 {
-                    spectral[idx].real = 0; // clear magnitude
-                    break; // no need to check remaining filters
+                    spectral[idx].real = tmpMag;
                 }
             }
         }
