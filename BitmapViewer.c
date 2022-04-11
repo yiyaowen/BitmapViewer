@@ -42,22 +42,28 @@ WCHAR gGrayTransWndName[] = L"GrayTrans";
 WCHAR gGtwHistDispWndName[] = L"GtwHistDisp";
 WCHAR gDomainFilterWndName[] = L"DomainFilter";
 WCHAR gDomainCustCoreWndName[] = L"DomainCustCore";
-
 WCHAR gAppAboutWndName[] = L"AppAbout";
+// New window members from v2.0.
+WCHAR gThresholdWndName[] = L"Threshold";
 
 // Application Handle
 HINSTANCE gInstance;
 
-// Main window & Child windows
+// Main window & Child windows (legacy)
 HWND gMainWnd,
      gSecondWnd,
      gGrayTransWnd,
      gGtwHistDispWnd,
      gDomainFilterWnd,
-     gDomainCustCoreWnd;
-// Remember to modify [valid window count] after add a new window.
+     gDomainCustCoreWnd,
+     gAppAboutWnd;
 
-HWND gAppAboutWnd;
+// Extension Windows (v2.0)
+// REMARK: After upgraded to v2.0, BitmapViewer's new child windows should
+// be classified into [extension windows] rather than [old child windows].
+HWND gThresholdWnd;
+
+// Remember to modify [valid window count] after add a new window.
 
 // Image data of main window
 MyBGRA* gImage = NULL;
@@ -88,13 +94,18 @@ BOOL gHasExternalFile = FALSE;
 // Used for common dialog. gFileName (full path), gTitleName(body name).
 WCHAR gFileName[MAX_PATH], gTitleName[MAX_PATH];
 
-// Child Window ID
+// Child Window ID (legacy)
 #define SECOND_WND 100
 #define GRAY_TRANS_WND 101
 #define GTW_HIST_DISP_WND 102
 #define DOMAIN_FILTER_WND 103
 #define DOMAIN_CUST_CORE_WND 104
-#define APP_ABOUT_WND 110
+#define APP_ABOUT_WND 105
+
+// Extension Window ID (v2.0)
+// REMARK: After upgraded to v2.0, BitmapViewer's new child windows should
+// be classified into [extension windows] rather than [old child windows].
+#define THRESHOLD_WND 106
 
 // Main Menu ID
 //-------------------------------------
@@ -110,61 +121,64 @@ WCHAR gFileName[MAX_PATH], gTitleName[MAX_PATH];
 //-------------------------------------
 #define IDM_GRAY 1
 // empirical formula
-#define IDM_GRAY_EMPI 1011
-#define IDM_GRAY_EVEN 1012
+#define IDM_GRAY_EMPI 1101
+#define IDM_GRAY_EVEN 1102
 // gamma correction
-#define IDM_GRAY_GAMMA 1013
-#define IDM_GRAY_R 1014
-#define IDM_GRAY_G 1015
-#define IDM_GRAY_B 1016
+#define IDM_GRAY_GAMMA 1103
+#define IDM_GRAY_R 1104
+#define IDM_GRAY_G 1105
+#define IDM_GRAY_B 1106
 // boundary expansion
-#define IDM_GRAY_2xBLACK 1017
-#define IDM_GRAY_2xMIRROR 1018
-#define IDM_GRAY_2xCOPY 1019
+#define IDM_GRAY_2xBLACK 1107
+#define IDM_GRAY_2xMIRROR 1108
+#define IDM_GRAY_2xCOPY 1109
+// threshold process
+#define IDM_GRAY_THRESHOLD 1110
 //-------------------------------------
 #define IDM_DOMAIN 2
 // SPAF: SPAtial Filter
-#define IDM_SPAF_BOX 1021
+#define IDM_SPAF_BOX 1201
 // gaussian core
-#define IDM_SPAF_GAUS 1022
+#define IDM_SPAF_GAUS 1202
 // median value
-#define IDM_SPAF_MEDI 1023
+#define IDM_SPAF_MEDI 1203
 // 2nd derivative
-#define IDM_SPAF_LAPLACE 1024
+#define IDM_SPAF_LAPLACE 1204
 // 1st derivative
-#define IDM_SPAF_SOBEL 1025
+#define IDM_SPAF_SOBEL 1205
 // custom core
-#define IDM_SPAF_CUST 10260 // DISABLE
+#define IDM_SPAF_CUST 1206 // DISABLE
 // SPEF: SPEctral Filter
 // power spectral (magnitude2)
-#define IDM_SPEF_POWER 1027
+#define IDM_SPEF_POWER 1207
 // phase spectral (atan2(y,x))
-#define IDM_SPEF_PHASE 1028
+#define IDM_SPEF_PHASE 1208
 // FFT accelerated types
-#define IDM_SPEF_POWER_FFT 1029
-#define IDM_SPEF_PHASE_FFT 1030
+#define IDM_SPEF_POWER_FFT 1209
+#define IDM_SPEF_PHASE_FFT 1210
 // custom core
-#define IDM_SPEF_CUST 10310 // DISABLE
+#define IDM_SPEF_CUST 1211 // DISABLE
 #define MY_DOMAIN_IDM_COUNT 11
+// Remember to update [domain idm count] after add a new menu item.
 //-------------------------------------
 #define IDM_TRANSFER_FUNC 3
 // ILPF: Idea Low Pass Filter
-#define IDM_TFUNC_ILPF 1031
+#define IDM_TFUNC_ILPF 1301
 // GLPF: Gaussian Low Pass Filter
-#define IDM_TFUNC_GLPF 1032
+#define IDM_TFUNC_GLPF 1302
 // BLPF: Butterworth Low Pass Filter
-#define IDM_TFUNC_BLPF 1033
+#define IDM_TFUNC_BLPF 1303
 // HPF: Ideal, Gaussian, Butterworth
-#define IDM_TFUNC_IHPF 1034
-#define IDM_TFUNC_GHPF 1035
-#define IDM_TFUNC_BHPF 1036
+#define IDM_TFUNC_IHPF 1304
+#define IDM_TFUNC_GHPF 1305
+#define IDM_TFUNC_BHPF 1306
 // Homomorphic Filter
-#define IDM_TFUNC_HOMO 1037
+#define IDM_TFUNC_HOMO 1307
 //-------------------------------------
 #define IDM_HELP 4
-#define IDM_EASTER_EGG 1041
-#define IDM_APP_ABOUT 1042
-#define IDM_WEB_HOME 1043
+#define IDM_EASTER_EGG 1401
+#define IDM_APP_ABOUT 1402
+#define IDM_WEB_HOME 1403
 // Remember to modify [en/disable operation menu] after add a new menu.
 
 //-------------------------------------------------------------------------------------------------
@@ -178,8 +192,10 @@ LRESULT CALLBACK GrayTransWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK GtwHistDispWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK DomainFilterWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK DomainCustCoreWndProc(HWND, UINT, WPARAM, LPARAM);
-
 LRESULT CALLBACK AppAboutWndProc(HWND, UINT, WPARAM, LPARAM);
+
+// New wndproc members from v2.0.
+LRESULT CALLBACK ThresholdWndProc(HWND, UINT, WPARAM, LPARAM);
 
 HICON myLoadAppIcon();
 
@@ -567,9 +583,10 @@ MyComplex* mycpIDFT2(MyComplex* pData, UINT M, UINT N);
 MyComplex* mycpFFT2(MyComplex* pData, UINT M, UINT RM, UINT N, UINT RN);
 MyComplex* mycpIFFT2(MyComplex* pData, UINT M, UINT RM, UINT N, UINT RN);
 
-// @see myLogarithmTrans for more detials.
-// This func will populate pDst with normalized logarithm of real parts in pSrc.
+// @see myLogarithmTrans, myExpGammaTrans my for more detials.
+// Populate pDst with normalized logarithm/exp-gamma of real parts in pSrc.
 void mycpLogarithmTrans(MyBGRA* pDst, MyComplex* pSrc, UINT M, UINT N, long double c);
+void mycpExpGammaTrans(MyBGRA* pDst, MyComplex* pSrc, UINT M, UINT N, long double gamma);
 
 // Populate destination image with the frequency power-spectral of source image.
 // To make the freq-spectral shown at the center, (-1)^(x+y) is applied before transform.
@@ -682,6 +699,20 @@ void myTfuncButterworthHPF(MyComplex* spectral, MyBmpInfo* info,
 void myTfuncHomomorphicFilter(MyComplex* spectral, MyBmpInfo* info,
     POINT* center, double* sigma, double c, double gammaLow, double gammaHigh, UINT nFilterCount);
 
+RECT myGetThresholdWndInitSize();
+
+// Perform threshold processing on the image.
+// 
+// Note the related spectral should be discarded after threshold processing.
+// If it is the spectral what you want to modify, use transfer-func instead.
+//
+// @param pDst: destination image buffer to write.
+// @param pSrc: source image buffer to read value.
+// @param pInfo: points to image pixel info.
+// @param threshold: 0 or 255 boundary line.
+//
+void myThresholdProcess(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT8 threshold);
+
 //-------------------------------------------------------------------------------------------------
 // Main Function
 //-------------------------------------------------------------------------------------------------
@@ -762,6 +793,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
     // App About Window
     wndclass.lpfnWndProc = AppAboutWndProc;
     wndclass.lpszClassName = gAppAboutWndName;
+    RegisterClass(&wndclass);
+
+    // Threshold Window
+    wndclass.lpfnWndProc = ThresholdWndProc;
+    wndclass.lpszClassName = gThresholdWndName;
     RegisterClass(&wndclass);
 
     // Create main menu.
@@ -1176,6 +1212,18 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                             // Note image Y-axis is flipped.
                             gImage[i + (gBmpInfo.nHeight - j - 1) * gBmpInfo.nWidth] = currColor;
                         }
+                    // Process spectral by the way (if has).
+                    // IMPORTANT: We don't support complex spectral operations. The power value
+                    // is simply set to 0 when the brush tool is applied (whatever the color is).
+                    if (gSpectral != NULL)
+                    {
+                        for (int i = xStart; i < xEnd; ++i)
+                            for (int j = yStart; j < yEnd; ++j)
+                            {
+                                // Note spectral Y-axis is flipped.
+                                gSpectral[i + (gBmpInfo.nHeight - j - 1) * gBmpInfo.nWidth].real = 0;
+                            }
+                    }
                     // There's no need to erase since double-buffer is enabled.
                     InvalidateRect(hwnd, NULL, FALSE);
                 }
@@ -1311,6 +1359,18 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                         // Note image Y-axis is flipped.
                         gImage[i + (gBmpInfo.nHeight - j - 1) * gBmpInfo.nWidth] = currColor;
                     }
+                // Process spectral by the way (if has).
+                // IMPORTANT: We don't support complex spectral operations. The power value
+                // is simply set to 0 when the brush tool is applied (whatever the color is).
+                if (gSpectral != NULL)
+                {
+                    for (int i = xStart; i < xEnd; ++i)
+                        for (int j = yStart; j < yEnd; ++j)
+                        {
+                            // Note spectral Y-axis is flipped.
+                            gSpectral[i + (gBmpInfo.nHeight - j - 1) * gBmpInfo.nWidth].real = 0;
+                        }
+                }
                 // There's no need to erase since double-buffer is enabled.
                 InvalidateRect(hwnd, NULL, FALSE);
             }
@@ -1961,6 +2021,24 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             InvalidateRect(hwnd, NULL, FALSE);
 
             return 0;
+        }
+        case IDM_GRAY_THRESHOLD:
+        {
+            RECT rc = myGetThresholdWndInitSize();
+            // Create window with quried size.
+            gThresholdWnd = CreateWindow(
+                gThresholdWndName,
+                L"阈值处理",
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+                left,
+                top,
+                rc.right - rc.left,
+                rc.bottom - rc.top,
+                gMainWnd,
+                NULL,
+                gInstance,
+                NULL);
+            return 0; 
         }
         // space-domain
         case IDM_SPAF_BOX:
@@ -2651,10 +2729,14 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             gBmpInfo = bmpInfo;
             memcpy(gImage, image, nPixelCount * sizeof(MyBGRA));
 
+            if (gSpectral != NULL)
+            {
+                free(gSpectral);
+                gSpectral = NULL;
+            }
             // Copy spectral data by the way (if has).
             if (spectral != NULL)
             {
-                if (gSpectral != NULL) free(gSpectral);
                 gSpectral = (MyComplex*)malloc(nPixelCount * sizeof(MyComplex));
                 myAssert(gSpectral);
                 memcpy(gSpectral, spectral, nPixelCount * sizeof(MyComplex));
@@ -2728,19 +2810,44 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 MoveWindow(hwnd, tmpRC.left, tmpRC.top, suitWidth, suitHeight, TRUE);
                 InvalidateRect(hwnd, NULL, TRUE);
             }
+            // Always clear this to make sure the filename input line
+            // keeps empty when the user re-open the open file dialog.
+            tmpFileName[0] = L'\0';
+            tmpTitleName[0] = L'\0';
             return 0;
         }
-        case SUBW_INVERT_PIXEL_BTN: // invert gray scale
+        case SUBW_INVERT_PIXEL_BTN: // Invert gray scale.
         {
-            for (UINT i = 0; i < bmpInfo.nWidth; ++i)
-                for (UINT j = 0; j < bmpInfo.nHeight; ++j)
+            UINT i, j, idx;
+            // Process origin pixels.
+            for (i = 0; i < bmpInfo.nWidth; ++i)
+                for (j = 0; j < bmpInfo.nHeight; ++j)
                 {
-                    UINT idx = i + j * bmpInfo.nWidth;
+                    idx = i + j * bmpInfo.nWidth;
                     image[idx].R = image[idx].G = image[idx].B = (255 - image[idx].R);
                 }
+            // Process related spectral.
+            if (spectral != NULL)
+            {
+                long double tmpMin = LDBL_MAX, tmpMax = LDBL_MIN;
+                // Find min, max values.
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        tmpMin = min(tmpMin, spectral[idx].real);
+                        tmpMax = max(tmpMax, spectral[idx].real);
+                    }
+                long double tmpVal = tmpMin + tmpMax;
+                // Invert real part.
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        spectral[idx].real = tmpVal - spectral[idx].real;
+                    }
+            }
             InvalidateRect(hwnd, NULL, TRUE);
-            // Release spectral data (if has).
-            if (spectral != NULL) { free(spectral); spectral = NULL; }
             return 0;
         }
 
@@ -2767,134 +2874,213 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         } \
     /* Note we have allocated memory for temporary image data. */ \
     free(tmpImage); \
-    InvalidateRect(hwnd, NULL, TRUE)
+    /* Release origin related spectral data (if has). */ \
+    if (spectral != NULL) { free(spectral); spectral = NULL; }
 
         case SUBW_MAIN_ADD_SUB_BTN: // main + sub
         {
-            MY_CHECK_MAIN_SUB_IMG; UINT i, j, idx;
+            UINT i, j, idx;
+            if (spectral == NULL || gSpectral == NULL) // Process origin pixels.
+            {
+                MY_CHECK_MAIN_SUB_IMG;
 
-            double tmpMin = 255, tmpMax = 0;
-            // Add, find min, max for later normalization.
-            for (i = 0; i < bmpInfo.nWidth; ++i)
-                for (j = 0; j < bmpInfo.nHeight; ++j)
-                {
-                    idx = i + j * bmpInfo.nWidth;
-                    tmpImage[idx] = (double)image[idx].R + (double)gImage[idx].R;
-                    // Update min, max values.
-                    tmpMin = min(tmpImage[idx], tmpMin);
-                    tmpMax = max(tmpImage[idx], tmpMax);
-                }
+                double tmpMin = 255, tmpMax = 0;
+                // Add, find min, max for later normalization.
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        tmpImage[idx] = (double)image[idx].R + (double)gImage[idx].R;
+                        // Update min, max values.
+                        tmpMin = min(tmpImage[idx], tmpMin);
+                        tmpMax = max(tmpImage[idx], tmpMax);
+                    }
 
-            MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
-            // Release spectral data (if has).
-            if (spectral != NULL) { free(spectral); spectral = NULL; }
+                MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            }
+            else // Process related spectral.
+            {
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        spectral[idx].real += gSpectral[idx].real;
+                    }
+                mycpLogarithmTrans(image, spectral, bmpInfo.nWidth, bmpInfo.nHeight, dLogParam);
+            }
+            InvalidateRect(hwnd, NULL, TRUE);
             return 0;
         }
         case SUBW_MAIN_SUB_SUB_BTN: // main - sub
         {
-            MY_CHECK_MAIN_SUB_IMG; UINT i, j, idx;
+            UINT i, j, idx;
+            if (spectral == NULL || gSpectral == NULL) // Process origin pixels.
+            {
+                MY_CHECK_MAIN_SUB_IMG;
 
-            double tmpMin = 255, tmpMax = 0;
-            // Subtract, find min, max for later normalization.
-            for (i = 0; i < bmpInfo.nWidth; ++i)
-                for (j = 0; j < bmpInfo.nHeight; ++j)
-                {
-                    idx = i + j * bmpInfo.nWidth;
-                    tmpImage[idx] = (double)gImage[idx].R - (double)image[idx].R;
-                    // Update min, max values.
-                    tmpMin = min(tmpImage[idx], tmpMin);
-                    tmpMax = max(tmpImage[idx], tmpMax);
-                }
+                double tmpMin = 255, tmpMax = 0;
+                // Subtract, find min, max for later normalization.
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        tmpImage[idx] = (double)gImage[idx].R - (double)image[idx].R;
+                        // Update min, max values.
+                        tmpMin = min(tmpImage[idx], tmpMin);
+                        tmpMax = max(tmpImage[idx], tmpMax);
+                    } 
 
-            MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
-            // Release spectral data (if has).
-            if (spectral != NULL) { free(spectral); spectral = NULL; }
+                MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            }
+            else // Process related spectral.
+            {
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        spectral[idx].real = gSpectral[idx].real - spectral[idx].real;
+                    }
+                mycpLogarithmTrans(image, spectral, bmpInfo.nWidth, bmpInfo.nHeight, dLogParam);
+            }
+            InvalidateRect(hwnd, NULL, TRUE);
             return 0;
         }
         case SUBW_SUB_SUB_MAIN_BTN: // sub - main
         {
-            MY_CHECK_MAIN_SUB_IMG; UINT i, j, idx;
+            UINT i, j, idx;
+            if (spectral == NULL || gSpectral == NULL) // Process origin pixels.
+            {
+                MY_CHECK_MAIN_SUB_IMG;
 
-            double tmpMin = 255, tmpMax = 0;
-            // Subtract, find min, max for later normalization.
-            for (i = 0; i < bmpInfo.nWidth; ++i)
-                for (j = 0; j < bmpInfo.nHeight; ++j)
-                {
-                    idx = i + j * bmpInfo.nWidth;
-                    tmpImage[idx] = (double)image[idx].R - (double)gImage[idx].R;
-                    // Update min, max values.
-                    tmpMin = min(tmpImage[idx], tmpMin);
-                    tmpMax = max(tmpImage[idx], tmpMax);
-                }
+                double tmpMin = 255, tmpMax = 0;
+                // Subtract, find min, max for later normalization.
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        tmpImage[idx] = (double)image[idx].R - (double)gImage[idx].R;
+                        // Update min, max values.
+                        tmpMin = min(tmpImage[idx], tmpMin);
+                        tmpMax = max(tmpImage[idx], tmpMax);
+                    }
 
-            MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
-            // Release spectral data (if has).
-            if (spectral != NULL) { free(spectral); spectral = NULL; }
+                MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            }
+            else // Process related spectral.
+            {
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        spectral[idx].real -= gSpectral[idx].real;
+                    }
+                mycpLogarithmTrans(image, spectral, bmpInfo.nWidth, bmpInfo.nHeight, dLogParam);
+            }
+            InvalidateRect(hwnd, NULL, TRUE);
             return 0;
         }
         case SUBW_MAIN_MUL_SUB_BTN: // main * sub
         {
-            MY_CHECK_MAIN_SUB_IMG; UINT i, j, idx;
+            UINT i, j, idx;
+            if (spectral == NULL || gSpectral == NULL) // Process origin pixels.
+            {
+                MY_CHECK_MAIN_SUB_IMG;
 
-            double tmpMin = 255, tmpMax = 0;
-            // Multiply, find min, max for later normalization.
-            for (i = 0; i < bmpInfo.nWidth; ++i)
-                for (j = 0; j < bmpInfo.nHeight; ++j)
-                {
-                    idx = i + j * bmpInfo.nWidth;
-                    tmpImage[idx] = (double)image[idx].R * (double)gImage[idx].R;
-                    // Update min, max values.
-                    tmpMin = min(tmpImage[idx], tmpMin);
-                    tmpMax = max(tmpImage[idx], tmpMax);
-                }
+                double tmpMin = 255, tmpMax = 0;
+                // Multiply, find min, max for later normalization.
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        tmpImage[idx] = (double)image[idx].R * (double)gImage[idx].R;
+                        // Update min, max values.
+                        tmpMin = min(tmpImage[idx], tmpMin);
+                        tmpMax = max(tmpImage[idx], tmpMax);
+                    }
 
-            MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
-            // Release spectral data (if has).
-            if (spectral != NULL) { free(spectral); spectral = NULL; }
+                MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            }
+            else // Process related spectral.
+            {
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        spectral[idx].real *= gSpectral[idx].real;
+                    }
+                mycpLogarithmTrans(image, spectral, bmpInfo.nWidth, bmpInfo.nHeight, dLogParam);
+            }
+            InvalidateRect(hwnd, NULL, TRUE);
             return 0;
         }
         case SUBW_MAIN_DIV_SUB_BTN: // main / sub
         {
-            MY_CHECK_MAIN_SUB_IMG; UINT i, j, idx;
+            UINT i, j, idx;
+            if (spectral == NULL || gSpectral == NULL) // Process origin pixels.
+            {
+                MY_CHECK_MAIN_SUB_IMG;
 
-            double tmpMin = 255, tmpMax = 0;
-            // Divide, find min, max for later normalization.
-            for (i = 0; i < bmpInfo.nWidth; ++i)
-                for (j = 0; j < bmpInfo.nHeight; ++j)
-                {
-                    idx = i + j * bmpInfo.nWidth;
-                    // We simply truncate here. Be careful not to divide by zero!
-                    tmpImage[idx] = (double)gImage[idx].R / (double)max(1e-3, image[idx].R);
-                    // Update min, max values.
-                    tmpMin = min(tmpImage[idx], tmpMin);
-                    tmpMax = max(tmpImage[idx], tmpMax);
-                }
+                double tmpMin = 255, tmpMax = 0;
+                // Divide, find min, max for later normalization.
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        // We simply truncate here. Be careful not to divide by zero!
+                        tmpImage[idx] = (double)gImage[idx].R / (double)max(1e-3, image[idx].R);
+                        // Update min, max values.
+                        tmpMin = min(tmpImage[idx], tmpMin);
+                        tmpMax = max(tmpImage[idx], tmpMax);
+                    }
 
-            MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
-            // Release spectral data (if has).
-            if (spectral != NULL) { free(spectral); spectral = NULL; }
+                MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            }
+            else // Process related spectral.
+            {
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        spectral[idx].real = gSpectral[idx].real / spectral[idx].real;
+                    }
+                mycpLogarithmTrans(image, spectral, bmpInfo.nWidth, bmpInfo.nHeight, dLogParam);
+            }
+            InvalidateRect(hwnd, NULL, TRUE);
             return 0;
         }
         case SUBW_SUB_DIV_MAIN_BTN: // sub / main
         {
-            MY_CHECK_MAIN_SUB_IMG; UINT i, j, idx;
+            UINT i, j, idx;
+            if (spectral == NULL || gSpectral == NULL) // Process origin pixels.
+            {
+                MY_CHECK_MAIN_SUB_IMG;
 
-            double tmpMin = 255, tmpMax = 0;
-            // Divide, find min, max for later normalization.
-            for (i = 0; i < bmpInfo.nWidth; ++i)
-                for (j = 0; j < bmpInfo.nHeight; ++j)
-                {
-                    idx = i + j * bmpInfo.nWidth;
-                    // We simply truncate here. Be careful not to divide by zero!
-                    tmpImage[idx] = (double)image[idx].R / (double)max(1e-3, image[idx].R);
-                    // Update min, max values.
-                    tmpMin = min(tmpImage[idx], tmpMin);
-                    tmpMax = max(tmpImage[idx], tmpMax);
-                }
+                double tmpMin = 255, tmpMax = 0;
+                // Divide, find min, max for later normalization.
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        // We simply truncate here. Be careful not to divide by zero!
+                        tmpImage[idx] = (double)image[idx].R / (double)max(1e-3, image[idx].R);
+                        // Update min, max values.
+                        tmpMin = min(tmpImage[idx], tmpMin);
+                        tmpMax = max(tmpImage[idx], tmpMax);
+                    }
 
-            MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
-            // Release spectral data (if has).
-            if (spectral != NULL) { free(spectral); spectral = NULL; }
+                MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
+            }
+            else // Process related spectral.
+            {
+                for (i = 0; i < bmpInfo.nWidth; ++i)
+                    for (j = 0; j < bmpInfo.nHeight; ++j)
+                    {
+                        idx = i + j * bmpInfo.nWidth;
+                        spectral[idx].real /= spectral[idx].real;
+                    }
+                mycpLogarithmTrans(image, spectral, bmpInfo.nWidth, bmpInfo.nHeight, dLogParam);
+            }
+            InvalidateRect(hwnd, NULL, TRUE);
             return 0;
         }
 
@@ -4124,6 +4310,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         // We decide that user can only open one window with the same type at the same time.
         EnableMenuItem(gMenu, IDM_FILE, MF_GRAYED | MF_BYPOSITION);
         EnableMenuItem(gMenu, IDM_DOMAIN, MF_GRAYED | MF_BYPOSITION);
+        EnableMenuItem(gMenu, IDM_TRANSFER_FUNC, MF_GRAYED | MF_BYPOSITION);
 
         // Allocate memory for image data.
         size_t nPixelCount = gBmpInfo.nWidth * gBmpInfo.nHeight;
@@ -5104,6 +5291,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         if (spectral != NULL) { free(spectral); spectral = NULL; }
         // Note we have allocated memory for image data.
         free(image);
+        image = NULL;
         // If this is the last child window to destroy.
         if (myValidWndCount() == 2)
         {
@@ -5111,6 +5299,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         }
         // Make the menu selectable again since the window is closed.
         EnableMenuItem(gMenu, IDM_DOMAIN, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
+        EnableMenuItem(gMenu, IDM_TRANSFER_FUNC, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
         DrawMenuBar(gMainWnd); // Force the main window to repaint the menu.
         SetFocus(gMainWnd); // Move focus to main window in case of accident hide.
         return 0;
@@ -5260,6 +5449,309 @@ LRESULT CALLBACK AppAboutWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     return DefWindowProc(hwnd, message, wParam, lParam);
 }
 
+//#################################################################################################
+/**************************************************************************************************\
+|                                                                                                  |
+|                                                                         Threshold Window Process |
+|                                                                                                  |
+\**************************************************************************************************/
+//#################################################################################################
+
+// THW: Threshold Window - 106
+// Its child window should start from 106_01.
+#define THW_THRESHOLD_LBL 10601
+#define THW_THRESHOLD_EDT 10602
+#define THW_THRESHOLD_BTN 10603
+#define THW_SAVE_TO_MAIN_BTN 10604
+
+LRESULT CALLBACK ThresholdWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    static HDC hdc;
+    static PAINTSTRUCT ps;
+
+    static UINT left, top;
+    static UINT width, height;
+
+    static MyBGRA* image = NULL;
+
+    static HWND lblThreshold;
+    static HWND edtThreshold;
+    static HWND btnThreshold;
+
+    static UINT8 nThresValue = 128;
+
+    static HWND btnSaveToMainBtn;
+
+    // Available display area for image.
+    static int validWidth = 0;
+    static int validHeight = 0;
+
+    static bCsorInValidArea = FALSE;
+
+    // Image display offset.
+    static int xImgAnchor = 0, yImgAnchor = 0;
+
+    switch (message)
+    {
+    case WM_CREATE:
+    {
+        // We decide that user can only open one window with the same type at the same time.
+        EnableMenuItem(gMenu, IDM_FILE, MF_GRAYED | MF_BYPOSITION);
+        EnableMenuItem(gMenu, IDM_GRAY, MF_GRAYED | MF_BYPOSITION);
+
+        // Copy image data from main window.
+        size_t nByteSize = gBmpInfo.nWidth * gBmpInfo.nHeight * sizeof(MyBGRA);
+        image = (MyBGRA*)malloc(nByteSize);
+        myAssert(image);
+        memcpy(image, gImage, nByteSize);
+
+        // Create threshold widgets.
+        lblThreshold = CreateWindow(
+            L"static",
+            L"阈值",
+            WS_CHILD | WS_VISIBLE | SS_CENTER,
+            12,
+            12 + gCharHeight / 2,
+            5 * gCharWidth,
+            gCharHeight,
+            hwnd,
+            (HMENU)THW_THRESHOLD_LBL,
+            gInstance,
+            NULL);
+        edtThreshold = CreateWindow(
+            L"edit",
+            L"128",
+            WS_CHILD | WS_VISIBLE,
+            18 + 5 * gCharWidth,
+            12 + gCharHeight / 2,
+            3 * gCharWidth + 2,
+            gCharHeight,
+            hwnd,
+            (HMENU)THW_THRESHOLD_EDT,
+            gInstance,
+            NULL);
+        btnThreshold = CreateWindow(
+            L"button",
+            L"更新结果",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            26 + 8 * gCharWidth,
+            12,
+            10 * gCharWidth,
+            2 * gCharHeight,
+            hwnd,
+            (HMENU)THW_THRESHOLD_BTN,
+            gInstance,
+            NULL);
+        // Create save-to-main button.
+        btnSaveToMainBtn = CreateWindow(
+            L"button",
+            L"保存至主窗口",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            32 + 18 * gCharWidth,
+            12,
+            14 * gCharWidth,
+            2 * gCharHeight,
+            hwnd,
+            (HMENU)THW_SAVE_TO_MAIN_BTN,
+            gInstance,
+            NULL);
+
+        // Initialize helper variables.
+        validWidth = gBmpInfo.nWidth;
+        validHeight = gBmpInfo.nHeight;
+
+        return 0;
+    }
+    case WM_MOVE:
+        left = LOWORD(lParam);
+        top = HIWORD(lParam);
+        return 0;
+
+    case WM_SIZE:
+    {
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        int clntWidth = rc.right - rc.left;
+        int clntHeight = rc.bottom - rc.top;
+
+        // Recalculate available image area.
+        validWidth = rc.right - rc.left - 24;
+        validHeight = rc.bottom - rc.top - 36 - 2 * gCharHeight;
+        // Clamp to origin image size when window is larger.
+        validWidth = min(validWidth, gBmpInfo.nWidth);
+        validHeight = min(validHeight, gBmpInfo.nHeight);
+
+        // Always reset image anchor when resized.
+        xImgAnchor = yImgAnchor = 0;
+
+        width = LOWORD(lParam);
+        height = HIWORD(lParam);
+        return 0;
+    }
+    case WM_SETCURSOR:
+    {
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(hwnd, &pt);
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+
+        int tmpImgTop = 24 + 2 * gCharHeight;
+
+        // Get valid area boundary.
+        int tmpWndRightMost = rc.right - 12;
+        int tmpImgRightMost = 12 + gBmpInfo.nWidth;
+        int tmpWndBottomMost = rc.bottom - 12;
+        int tmpImgBottomMost = tmpImgTop + gBmpInfo.nHeight;
+
+        // Check whether above the image.
+        if (pt.x >= 12 && pt.x < min(tmpImgRightMost, tmpWndRightMost) &&
+            pt.y >= tmpImgTop && pt.y < min(tmpImgBottomMost, tmpWndBottomMost))
+        {
+            if (GetAsyncKeyState(VK_RBUTTON) & 0x8000)
+                // Hold down right button to start move.
+                SetCursor(LoadCursor(NULL, MAKEINTRESOURCE(IDC_SIZEALL)));
+            else
+                // Show mark cursor otherwise.
+                SetCursor(LoadCursor(NULL, MAKEINTRESOURCE(IDC_HAND)));
+
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(hwnd, NULL, FALSE);
+            bCsorInValidArea = TRUE; // cursor in workspace
+
+            return 0;
+        }
+
+        // There's no need to erase since double-buffer is enabled.
+        if (bCsorInValidArea) InvalidateRect(hwnd, NULL, FALSE);
+        bCsorInValidArea = FALSE; // cursor out of workspace
+
+        break; // Use default cursor in other places.
+    }
+    case WM_MOUSEMOVE:
+    {
+        static int csorCurrX, csorCurrY;
+        static int csorLastX, csorLastY;
+
+        csorCurrX = GET_X_LPARAM(lParam);
+        csorCurrY = GET_Y_LPARAM(lParam);
+
+        if (bCsorInValidArea) // in workspace
+        {
+            // Trigger move mode.
+            if (wParam & MK_RBUTTON)
+            {
+                // Note +/- to match image coordinate.
+                xImgAnchor -= (csorCurrX - csorLastX);
+                yImgAnchor += (csorCurrY - csorLastY);
+
+                // Clamp image anchor offset into valid range.
+                // X offset: 0 ~ (ImgW - ValidW)
+                int xOffsetMost = gBmpInfo.nWidth - validWidth;
+                xImgAnchor = max(0, min(xOffsetMost, xImgAnchor));
+                // Y offset: (ValidH - ImgH) ~ 0
+                int yOffsetMost = validHeight - gBmpInfo.nHeight;
+                yImgAnchor = max(yOffsetMost, min(0, yImgAnchor));
+            }
+            // We have notified to repaint in WM_SETCURSOR.
+        }
+        csorLastX = csorCurrX;
+        csorLastY = csorCurrY;
+        return 0;
+    }
+    case WM_PAINT:
+    {
+        hdc = BeginPaint(hwnd, &ps);
+
+        RECT rcClnt;
+        GetClientRect(hwnd, &rcClnt);
+        //--------------------------------------------------------------------- Double Buffer Start
+        HDC hMemDC = CreateCompatibleDC(hdc); // Acquire copy device context.
+        HBITMAP hMemBmp = CreateCompatibleBitmap( // Draw on temporary bitmap.
+            hdc, rcClnt.right - rcClnt.left, rcClnt.bottom - rcClnt.top);
+        SelectObject(hMemDC, hMemBmp);
+        // Erase with master window's bkgn brush.
+        FillRect(hMemDC, &rcClnt, (HBRUSH)GetClassLongPtr(hwnd, GCLP_HBRBACKGROUND));
+        //---------------------------------------------------------------------
+
+        // We have to do this to stick the image at left top,
+        // since Y-axis is flipped in origin pixel buffer.
+        int tmpImgY = validHeight - gBmpInfo.nHeight;
+
+        // Display image from left top corner of main window.
+        myDisplayImage(hMemDC, 12, 24 + 2 * gCharHeight, max(0, validWidth), max(0, validHeight),
+                       xImgAnchor, abs(min(0, tmpImgY)) + yImgAnchor, image, &gBmpInfo);
+
+        //--------------------------------------------------------------------- Double Buffer End
+        BitBlt(hdc, 0, 0, rcClnt.right - rcClnt.left,
+               rcClnt.bottom - rcClnt.top, hMemDC, 0, 0, SRCCOPY);
+        DeleteDC(hMemDC);
+        DeleteObject(hMemBmp);
+        //---------------------------------------------------------------------
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_COMMAND:
+    {
+        switch (LOWORD(wParam))
+        {
+        case THW_THRESHOLD_EDT:
+        {
+            WCHAR szThresParam[10];
+            GetWindowText(edtThreshold, szThresParam, 10);
+            int iUserInput = 1;
+            if (swscanf(szThresParam, L"%i", &iUserInput) == 1)
+                nThresValue = (UINT8)iUserInput;
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
+        case THW_THRESHOLD_BTN:
+        {
+            myThresholdProcess(image, gImage, &gBmpInfo, nThresValue);
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
+        case THW_SAVE_TO_MAIN_BTN:
+        {
+            // Copy image data to main window.
+            memcpy(gImage, image, gBmpInfo.nWidth * gBmpInfo.nHeight * sizeof(MyBGRA));
+            // Discard spectral after processed.
+            if (gSpectral != NULL) { free(gSpectral); gSpectral = NULL; }
+
+            // Notify user to save change.
+            WCHAR title[MAX_PATH + 20];
+            wsprintf(title, L"%s - (未保存)", gHasExternalFile ? gFileName : L"Untitled");
+            SetWindowText(gMainWnd, title);
+
+            // Repaint main window image.
+            // There's no need to erase since double-buffer is enabled.
+            InvalidateRect(gMainWnd, NULL, FALSE);
+            return 0;
+        }
+        default:
+            return 0;
+        }
+    }
+    case WM_DESTROY:
+        // Note we have allocated memory for image data.
+        free(image);
+        image = NULL;
+        // If this is the last child window to destroy.
+        if (myValidWndCount() == 2)
+        {
+            EnableMenuItem(gMenu, IDM_FILE, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
+        }
+        // Make the menu selectable again since the window is closed.
+        EnableMenuItem(gMenu, IDM_GRAY, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
+        DrawMenuBar(gMainWnd); // Force the main window to repaint the menu.
+        return 0;
+    }
+    return DefWindowProc(hwnd, message, wParam, lParam);
+}
+
 //-------------------------------------------------------------------------------------------------
 // Digital Image Processing Subroutine & Miscellaneous Function Definition
 //-------------------------------------------------------------------------------------------------
@@ -5312,7 +5804,9 @@ HMENU myLoadMainMenu()
         OPT_______,
         OPT_MIDDLE, IDM_GRAY_2xBLACK,       L'2', L'x', L'黑', L'色', L'填', L'充', 0,
         OPT_MIDDLE, IDM_GRAY_2xMIRROR,      L'2', L'x', L'镜', L'像', L'填', L'充', 0,
-        OPT_MIDEND, IDM_GRAY_2xCOPY,        L'2', L'x', L'复', L'制', L'填', L'充', 0,
+        OPT_MIDDLE, IDM_GRAY_2xCOPY,        L'2', L'x', L'复', L'制', L'填', L'充', 0,
+        OPT_______,
+        OPT_MIDEND, IDM_GRAY_THRESHOLD,     L'阈', L'值', L'处', L'理', 0,
 
         OPT_TOPLEV,                         L'卷', L'积', L'滤', L'波', 0,
         OPT_MIDDLE, IDM_SPAF_BOX,           L'空', L'域', L'_', L'盒', L'式', L'平', L'均', 0,
@@ -5382,11 +5876,14 @@ UINT myValidWndCount()
 
 #define MY_CNT_WND(Wnd_Handle) if (IsWindow(Wnd_Handle)) ++cnt;
 
+    // legacy
     MY_CNT_WND(gMainWnd)
     MY_CNT_WND(gGrayTransWnd)
     MY_CNT_WND(gGtwHistDispWnd)
     MY_CNT_WND(gDomainFilterWnd)
     MY_CNT_WND(gDomainCustCoreWnd)
+    // v2.0
+    MY_CNT_WND(gThresholdWnd)
 
 #undef MY_CNT_WND
 
@@ -5439,7 +5936,7 @@ void myExpGammaTrans(MyBGRA* pData, MyBmpInfo* pInfo, double gamma)
 {
     UINT i, j, idx; // Declare common index variables here.
 
-// Allocate an intermidiate buffer to normalize later.
+    // Allocate an intermidiate buffer to normalize later.
     double* buffer = (double*)malloc(pInfo->nWidth * pInfo->nHeight * sizeof(double));
     myAssert(buffer);
 
@@ -7018,6 +7515,52 @@ void mycpLogarithmTrans(MyBGRA* pDst, MyComplex* pSrc, UINT M, UINT N, long doub
     free(buffer);
 }
 
+void mycpExpGammaTrans(MyBGRA* pDst, MyComplex* pSrc, UINT M, UINT N, long double gamma)
+{
+    UINT i, j, idx; // Declare common index variables here.
+
+    // We must allocate an extra intermidiate buffer to keep pSrc constant.
+    long double* buffer = (long double*)malloc(M * N * sizeof(long double));
+    myAssert(buffer);
+
+    long double tmpMin = LDBL_MAX, tmpMax = LDBL_MIN;
+    // Find min, max values.
+    for (i = 0; i < M; ++i)
+        for (j = 0; j < N; ++j)
+        {
+            idx = i + j * M;
+            // Update min, max values.
+            tmpMin = min(tmpMin, pSrc[idx].real);
+            tmpMax = max(tmpMax, pSrc[idx].real);
+        }
+
+    long double expMin = tmpMin;
+    tmpMin = LDBL_MAX; tmpMax = LDBL_MIN;
+    // Calculate logarithm transform.
+    for (i = 0; i < M; ++i)
+        for (j = 0; j < N; ++j)
+        {
+            idx = i + j * M;
+            buffer[idx] = pow(pSrc[idx].real, gamma);
+            // Update min, max values.
+            tmpMin = min(tmpMin, buffer[idx]);
+            tmpMax = max(tmpMax, buffer[idx]);
+        }
+
+    tmpMax -= tmpMin;
+    // Normalize to 0 ~ 255.
+    for (i = 0; i < M; ++i)
+        for (j = 0; j < N; ++j)
+        {
+            idx = i + j * M;
+            buffer[idx] = 255 * ((buffer[idx] - tmpMin) / tmpMax);
+            pDst[idx].R = pDst[idx].G = pDst[idx].B = (UINT8)min(255, max(0, buffer[idx]));
+        }
+
+    // Note we have allocated memory for intermidate buffer.
+    free(buffer);
+}
+
 MyComplex* myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam)
 {
     UINT i, j, idx; // Declare common index variables here.
@@ -7327,13 +7870,16 @@ void myTfuncGaussianLPF(MyComplex* spectral, MyBmpInfo* info, POINT* center, dou
         for (UINT j = 0; j < info->nHeight; ++j)
         {
             UINT idx = i + j * info->nWidth;
+            // Add all weight coef firstly.
+            long double D2 = 0, weightCoef = 0;
             for (UINT k = 0; k < nFilterCount; ++k)
             {
-                double D2 = (i - center[k].x) * (i - center[k].x) +
-                            (j - center[k].y) * (j - center[k].y);
-                // Apply all gaussian coefficients in sequence.
-                spectral[idx].real *= pow(E, D2 * _twosigma2[k]);
+                D2 = (i - center[k].x) * (i - center[k].x) +
+                     (j - center[k].y) * (j - center[k].y);
+                weightCoef += pow(E, D2 * _twosigma2[k]);
             }
+            // Apply all gaussian coefficients at once.
+            spectral[idx].real *= weightCoef;
         }
 
     // Note we have allocated memory for helper data.
@@ -7352,13 +7898,16 @@ void myTfuncGaussianHPF(MyComplex* spectral, MyBmpInfo* info, POINT* center, dou
         for (UINT j = 0; j < info->nHeight; ++j)
         {
             UINT idx = i + j * info->nWidth;
+            // Add all weight coef firstly.
+            long double D2 = 0, weightCoef = 0;
             for (UINT k = 0; k < nFilterCount; ++k)
             {
-                double D2 = (i - center[k].x) * (i - center[k].x) +
-                    (j - center[k].y) * (j - center[k].y);
-                // Apply all gaussian coefficients in sequence.
-                spectral[idx].real *= (1 - pow(E, D2 * _twosigma2[k]));
+                D2 = (i - center[k].x) * (i - center[k].x) +
+                     (j - center[k].y) * (j - center[k].y);
+                weightCoef += (1 - pow(E, D2 * _twosigma2[k]));
             }
+            // Apply all gaussian coefficients at once.
+            spectral[idx].real *= weightCoef;
         }
 
     // Note we have allocated memory for helper data.
@@ -7372,13 +7921,16 @@ void myTfuncButterworthLPF(MyComplex* spectral, MyBmpInfo* info,
         for (UINT j = 0; j < info->nHeight; ++j)
         {
             UINT idx = i + j * info->nWidth;
+            // Add all weight coef firstly.
+            long double D2 = 0, weightCoef = 0;
             for (UINT k = 0; k < nFilterCount; ++k)
             {
-                double D2 = (i - center[k].x) * (i - center[k].x) +
-                            (j - center[k].y) * (j - center[k].y);
-                // Apply all butterworth coefficients in sequence.
-                spectral[idx].real *= 1 / (1 + pow(D2 / (cutoff[k] * cutoff[k]), nOrder));
+                D2 = (i - center[k].x) * (i - center[k].x) +
+                     (j - center[k].y) * (j - center[k].y);
+                weightCoef += 1 / (1 + pow(D2 / (cutoff[k] * cutoff[k]), nOrder));
             }
+            // Apply all butterworth coefficients at once.
+            spectral[idx].real *= weightCoef;
         }
 }
 
@@ -7389,13 +7941,17 @@ void myTfuncButterworthHPF(MyComplex* spectral, MyBmpInfo* info,
         for (UINT j = 0; j < info->nHeight; ++j)
         {
             UINT idx = i + j * info->nWidth;
+            // Add all weight coef firstly.
+            long double D2 = 0, weightCoef = 0;
             for (UINT k = 0; k < nFilterCount; ++k)
             {
-                double D2 = (i - center[k].x) * (i - center[k].x) +
+                D2 = (i - center[k].x) * (i - center[k].x) +
                     (j - center[k].y) * (j - center[k].y);
-                // Apply all butterworth coefficients in sequence.
-                spectral[idx].real *= 1 / (1 + pow((cutoff[k] * cutoff[k]) / D2, nOrder));
+                weightCoef += 1 / (1 + pow((cutoff[k] * cutoff[k]) / D2, nOrder));
+
             }
+            // Apply all butterworth coefficients at once.
+            spectral[idx].real *= weightCoef;
         }
 }
 
@@ -7413,17 +7969,45 @@ void myTfuncHomomorphicFilter(MyComplex* spectral, MyBmpInfo* info, POINT* cente
         for (UINT j = 0; j < info->nHeight; ++j)
         {
             UINT idx = i + j * info->nWidth;
+            // Add all weight coef firstly.
+            long double D2 = 0, weightCoef = 0;
             for (UINT k = 0; k < nFilterCount; ++k)
             {
-                double D2 = (i - center[k].x) * (i - center[k].x) +
-                            (j - center[k].y) * (j - center[k].y);
-                // Apply all homomorphic filter coefficients in sequence.
-                spectral[idx].real *= (gammaDiff * (1 - pow(E, D2 * _csigma2[k])) + gammaLow);
+                D2 = (i - center[k].x) * (i - center[k].x) +
+                     (j - center[k].y) * (j - center[k].y);
+                weightCoef += (gammaDiff * (1 - pow(E, D2 * _csigma2[k])) + gammaLow);
             }
+            // Apply all homomorphic filter coefficients at once.
+            spectral[idx].real *= weightCoef;
         }
 
     // Note we have allocated memory for helper data.
     free(_csigma2);
+}
+
+RECT myGetThresholdWndInitSize()
+{
+    RECT rc = { 0, 0, gBmpInfo.nWidth + 24, gBmpInfo.nHeight + 36 + 2 * gCharHeight };
+    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+    return rc;
+}
+
+void myThresholdProcess(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT8 threshold)
+{
+    for (UINT i = 0; i < pInfo->nWidth; ++i)
+        for (UINT j = 0; j < pInfo->nHeight; ++j)
+        {
+            UINT idx = i + j * pInfo->nWidth;
+            // Low for black, high for white.
+            if (pSrc[idx].R < threshold)
+            {
+                pDst[idx].R = pDst[idx].G = pDst[idx].B = 0;
+            }
+            else // There's no need to change alpha channel anyway.
+            {
+                pDst[idx].R = pDst[idx].G = pDst[idx].B = 255;
+            }
+        }
 }
 
 //#################################################################################################
