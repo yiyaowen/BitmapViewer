@@ -174,11 +174,27 @@ WCHAR gFileName[MAX_PATH], gTitleName[MAX_PATH];
 #define IDM_TFUNC_BHPF 1306
 // Homomorphic Filter
 #define IDM_TFUNC_HOMO 1307
+#define MY_TFUNC_IDM_COUNT 7
+// Remember to update [tfunc idm count] after add a new menu item.
 //-------------------------------------
-#define IDM_HELP 4
-#define IDM_EASTER_EGG 1401
-#define IDM_APP_ABOUT 1402
-#define IDM_WEB_HOME 1403
+#define IDM_NOISE_MODEL 4
+// normal
+#define IDM_NMODEL_GAUSSIAN 1401
+// gaussian^2
+#define IDM_NMODEL_RAYLEIGH 1402
+// gamma distribution
+#define IDM_NMODEL_ERLANG 1403
+// EXP: Exponential
+#define IDM_NMODEL_EXP 1404
+// constant distribution
+#define IDM_NMODEL_UNIFORM 1405
+// SANDP: Salt & Pepper
+#define IDM_NMODEL_SANDP 1406
+//-------------------------------------
+#define IDM_HELP 5
+#define IDM_EASTER_EGG 1501
+#define IDM_APP_ABOUT 1502
+#define IDM_WEB_HOME 1503
 // Remember to modify [en/disable operation menu] after add a new menu.
 
 //-------------------------------------------------------------------------------------------------
@@ -712,6 +728,57 @@ RECT myGetThresholdWndInitSize();
 // @param threshold: 0 or 255 boundary line.
 //
 void myThresholdProcess(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT8 threshold);
+
+// Error function (inverse), approximated with numeric method.
+double myErf(double x);
+double myErfInverse(double x);
+
+// Apply noise with gaussian distribution.
+// 
+// @param u: mean value.
+// @param sigma: standard deviation.
+//
+void myApplyGaussianNoise(MyBGRA* data, MyBmpInfo* info, double u, double sigma);
+
+// Apply noise with rayleigh distribution.
+//
+// @param a, b:
+//              p(z) = 0, if z < a;
+// otherwise:
+//              p(z) = 2/b * (z - a) * e^(-(z-a)^2 / b).
+// @remark
+//              mean value  = a + sqrt(pi * b / 4)
+//              variance    = b * (4 - pi) / 4
+//
+void myApplyRayleighNoise(MyBGRA* data, MyBmpInfo* info, double a, double b);
+
+// Apply noise with erlang distribution.
+//
+// @param a, b:
+//              p(z) = 0, if z < 0;
+// otherwise:
+//              p(z) = a^b * z^(b-1) * e^(-a * z) / (b-1)!.
+// @remark
+//              mean value  = b / a
+//              variance    = b / a^2
+//
+void myApplyErlangNoise(MyBGRA* data, MyBmpInfo* info, double a, int b);
+
+// Apply noise with exponential distribution.
+//
+// Speical case of Erlang noise when b = 1.
+//
+void myApplyExponentialNoise(MyBGRA* data, MyBmpInfo* info, double a);
+
+// Apply noise with uniform distribution.
+void myApplyUniformNoise(MyBGRA* data, MyBmpInfo* info, double start, double end);
+
+// Apply salt & pepper noise.
+// 
+// @param salt: white pixel probability.
+// @param pepper: black pixel probability.
+//
+void myApplySaltAndPepperNoise(MyBGRA* data, MyBmpInfo* info, double salt, double pepper);
 
 //-------------------------------------------------------------------------------------------------
 // Main Function
@@ -2059,8 +2126,21 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         case IDM_TFUNC_GHPF:
         case IDM_TFUNC_BHPF:
         case IDM_TFUNC_HOMO:
+        // noise-model
+        case IDM_NMODEL_GAUSSIAN:
+        case IDM_NMODEL_RAYLEIGH:
+        case IDM_NMODEL_ERLANG:
+        case IDM_NMODEL_EXP:
+        case IDM_NMODEL_UNIFORM:
+        case IDM_NMODEL_SANDP:
         {
-            if (LOWORD(wParam) >= IDM_TFUNC_ILPF && gSpectral == NULL)
+            // TODO: support Erlang noise mode.
+            if (LOWORD(wParam) == IDM_NMODEL_ERLANG)
+            {
+                MessageBox(hwnd, L"抱歉, 我们暂时不支持爱尔兰噪声模型.", L"提示", MB_OK | MB_ICONINFORMATION);
+                return 0;
+            }
+            if (LOWORD(wParam) >= IDM_TFUNC_ILPF && LOWORD(wParam) < IDM_NMODEL_GAUSSIAN && gSpectral == NULL)
             {
                 MessageBox(hwnd, L"频谱为空, 无法调用传递函数.", L"提示", MB_OK | MB_ICONINFORMATION);
                 return 0;
@@ -4268,6 +4348,15 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         10, // Gaussian HPF
         11, // Butterworth HPF
         11, // Homomorphic Filter
+
+        // noise-model
+
+        2, // Gaussian
+        2, // Rayleigh
+        2, // Erlang
+        1, // Exponential
+        2, // Uniform
+        2, // Salt & Pepper
     };
 
     // Available display area for image.
@@ -4311,6 +4400,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         EnableMenuItem(gMenu, IDM_FILE, MF_GRAYED | MF_BYPOSITION);
         EnableMenuItem(gMenu, IDM_DOMAIN, MF_GRAYED | MF_BYPOSITION);
         EnableMenuItem(gMenu, IDM_TRANSFER_FUNC, MF_GRAYED | MF_BYPOSITION);
+        EnableMenuItem(gMenu, IDM_NOISE_MODEL, MF_GRAYED | MF_BYPOSITION);
 
         // Allocate memory for image data.
         size_t nPixelCount = gBmpInfo.nWidth * gBmpInfo.nHeight;
@@ -4328,9 +4418,14 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         // Acquire selected menu item text.
         WCHAR szDomainFilterMenuText[20] = L"卷积滤波 - ";
         WCHAR szTransferFuncMenuText[20] = L"传递函数 - ";
+        WCHAR szNoisingModelMenuText[20] = L"噪声模型 - ";
 
-        WCHAR* pSelectedMenuText = (nFilterType >= IDM_TFUNC_ILPF) ?
-            szTransferFuncMenuText : szDomainFilterMenuText;
+        WCHAR* pSelectedMenuText =
+            (nFilterType >= IDM_TFUNC_ILPF) ?
+                ((nFilterType >= IDM_NMODEL_GAUSSIAN) ?
+                szNoisingModelMenuText :
+                szTransferFuncMenuText) :
+            szDomainFilterMenuText;
 
         GetMenuString(gMenu, nFilterType, pSelectedMenuText + 7, 13, MF_BYCOMMAND);
         // Set child window caption text.
@@ -4382,9 +4477,13 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         // Record right most of bottom panel.
         xBottomPanelRight = 36 + 40 * gCharWidth;
 
-        UINT iParamIndex = (nFilterType >= IDM_TFUNC_ILPF) ?
-            ((nFilterType - IDM_TFUNC_ILPF) + MY_DOMAIN_IDM_COUNT) : (nFilterType - IDM_SPAF_BOX);
-        // Create related parameter widget lines for specific filter/tfunc type.
+        UINT iParamIndex =
+            (nFilterType >= IDM_TFUNC_ILPF) ?
+                ((nFilterType >= IDM_NMODEL_GAUSSIAN) ?
+                (nFilterType - IDM_NMODEL_GAUSSIAN + MY_DOMAIN_IDM_COUNT + MY_TFUNC_IDM_COUNT) :
+                (nFilterType - IDM_TFUNC_ILPF + MY_DOMAIN_IDM_COUNT)) :
+            (nFilterType - IDM_SPAF_BOX);
+        // Create related parameter widget lines for specific filter/tfunc/nmodel type.
         myCreateParamWidgets(hwnd, nParamCount[iParamIndex],
                              gBmpInfo.nWidth + 24, lblParam, edtParam);
 
@@ -4510,6 +4609,70 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
 #undef MY_BLPF_PARAM_LINE
             break;
         }
+        case IDM_NMODEL_GAUSSIAN:
+        {
+            SetWindowText(lblParam[0], L"均值 u");
+            SetWindowText(edtParam[0], L"0");
+            dParamVal[0] = 0; // u, mean value
+            SetWindowText(lblParam[1], L"标准差 sigma");
+            SetWindowText(edtParam[1], L"10");
+            dParamVal[1] = 10; // sigma, standard deviation
+            break;
+        }
+        case IDM_NMODEL_RAYLEIGH:
+        {
+            // u = a + sqrt(pi * b / 4)
+            // sigma^2 = b * (4 - pi) / 4
+            SetWindowText(lblParam[0], L"参数 a");
+            SetWindowText(edtParam[0], L"0");
+            dParamVal[0] = 0; // parameter a
+            SetWindowText(lblParam[1], L"参数 b");
+            SetWindowText(edtParam[1], L"500");
+            dParamVal[1] = 500; // parameter b
+            break;
+        }
+        case IDM_NMODEL_ERLANG:
+        {
+            // u = b / a
+            // sigma^2 = b / a^2
+            SetWindowText(lblParam[0], L"参数 a");
+            SetWindowText(edtParam[0], L"1");
+            dParamVal[0] = 1; // parameter a
+            SetWindowText(lblParam[1], L"参数 b");
+            SetWindowText(edtParam[1], L"2");
+            iParamVal[1] = 2; // parameter b
+            break;
+        }
+        // Special case of erlang distribution when b = 1.
+        case IDM_NMODEL_EXP:
+        {
+            // u = 1 / a
+            // sigma^2 = 1 / a^2
+            SetWindowText(lblParam[0], L"保持概率 a");
+            SetWindowText(edtParam[0], L"0.1");
+            dParamVal[0] = 0.1; // parameter a
+            break;
+        }
+        case IDM_NMODEL_UNIFORM:
+        {
+            SetWindowText(lblParam[0], L"起始点 a");
+            SetWindowText(edtParam[0], L"-25");
+            dParamVal[0] = -25; // start point
+            SetWindowText(lblParam[1], L"结束点 b");
+            SetWindowText(edtParam[1], L"+25");
+            dParamVal[1] = +25; // end point
+            break;
+        }
+        case IDM_NMODEL_SANDP:
+        {
+            SetWindowText(lblParam[0], L"白点概率 P1");
+            SetWindowText(edtParam[0], L"0.1");
+            dParamVal[0] = 0.1; // salt probability
+            SetWindowText(lblParam[1], L"黑点概率 P2");
+            SetWindowText(edtParam[1], L"0.1");
+            dParamVal[1] = 0.1; // pepper probability
+            break;
+        }
         default:
             break;
         }
@@ -4519,7 +4682,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         validHeight = gBmpInfo.nHeight;
 
         // Create marker utils for transfer-func window.
-        if (nFilterType >= IDM_TFUNC_ILPF)
+        if (nFilterType >= IDM_TFUNC_ILPF && nFilterType < IDM_NMODEL_GAUSSIAN)
         {
             int i; // Declare common index variables here.
             for (i = 0; i < _countof(markerPositions); ++i)
@@ -4617,8 +4780,12 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         MoveWindow(b3sBorderMode, 24 + 24 * gCharWidth, clntHeight - 6 - (rc.bottom - rc.top),
                    rc.right - rc.left, rc.bottom - rc.top, TRUE);
 
-        UINT iParamIndex = (nFilterType >= IDM_TFUNC_ILPF) ?
-            ((nFilterType - IDM_TFUNC_ILPF) + MY_DOMAIN_IDM_COUNT) : (nFilterType - IDM_SPAF_BOX);
+        UINT iParamIndex =
+            (nFilterType >= IDM_TFUNC_ILPF) ?
+                ((nFilterType >= IDM_NMODEL_GAUSSIAN) ?
+                (nFilterType - IDM_NMODEL_GAUSSIAN + MY_DOMAIN_IDM_COUNT + MY_TFUNC_IDM_COUNT) :
+                (nFilterType - IDM_TFUNC_ILPF + MY_DOMAIN_IDM_COUNT)) :
+            (nFilterType - IDM_SPAF_BOX);
         // Keep widget lines stick to right border of window.
         myMoveParamWidgets(nParamCount[iParamIndex],
                            clntWidth - 12 - 25 * gCharWidth, lblParam, edtParam);
@@ -4651,7 +4818,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
                        xImgAnchor, abs(min(0, tmpImgY)) + yImgAnchor, image, &gBmpInfo);
 
         // Show marker for transfer-func window.
-        if (nFilterType >= IDM_TFUNC_ILPF)
+        if (nFilterType >= IDM_TFUNC_ILPF && nFilterType < IDM_NMODEL_GAUSSIAN)
         {
             int i; // Declare common index variables here.
 
@@ -4753,7 +4920,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         if (bCsorInValidArea) // in workspace
         {
             // Mark position for transfer-func window.
-            if (nFilterType >= IDM_TFUNC_ILPF && (wParam & MK_LBUTTON))
+            if (nFilterType >= IDM_TFUNC_ILPF && nFilterType < IDM_NMODEL_GAUSSIAN && (wParam & MK_LBUTTON))
             {
                 // From window coordinate to image coordinate.
                 markerPositions[currMarkerIdx].x = csorCurrX + abs(xImgAnchor);
@@ -4791,7 +4958,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
     {
         SetFocus(hwnd);
         // Mark position for transfer-func window.
-        if (nFilterType >= IDM_TFUNC_ILPF)
+        if (nFilterType >= IDM_TFUNC_ILPF && nFilterType < IDM_NMODEL_GAUSSIAN)
         {
             // From window coordinate to image coordinate.
             markerPositions[currMarkerIdx].x = GET_X_LPARAM(lParam) + abs(xImgAnchor);
@@ -5055,6 +5222,24 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
                     }
                 }
                 break;
+            case IDM_NMODEL_GAUSSIAN:
+                myApplyGaussianNoise(image, &gBmpInfo, dParamVal[0], dParamVal[1]);
+                break;
+            case IDM_NMODEL_RAYLEIGH:
+                myApplyRayleighNoise(image, &gBmpInfo, dParamVal[0], dParamVal[1]);
+                break;
+            case IDM_NMODEL_ERLANG:
+                myApplyErlangNoise(image, &gBmpInfo, dParamVal[0], iParamVal[1]);
+                break;
+            case IDM_NMODEL_EXP:
+                myApplyExponentialNoise(image, &gBmpInfo, dParamVal[0]);
+                break;
+            case IDM_NMODEL_UNIFORM:
+                myApplyUniformNoise(image, &gBmpInfo, dParamVal[0], dParamVal[1]);
+                break;
+            case IDM_NMODEL_SANDP:
+                myApplySaltAndPepperNoise(image, &gBmpInfo, dParamVal[0], dParamVal[1]);
+                break;
             default:
                 break;
             }
@@ -5235,6 +5420,73 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
                 InvalidateRect(hwnd, NULL, FALSE);
                 return 0;
             }
+            case IDM_NMODEL_GAUSSIAN:
+            {
+                return 0;
+            }
+            case IDM_NMODEL_RAYLEIGH:
+            {
+                if (idxParam == 1) // parameter b
+                {
+                    // Make sure b > 0
+                    dParamVal[1] = max(1e-3, dParamVal[1]);
+                }
+                return 0;
+            }
+            case IDM_NMODEL_ERLANG:
+            {
+                if (idxParam == 0) // parameter a
+                {
+                    double maxA = iParamVal[1] - 1e-3;
+                    // Make sure 0 < a < b.
+                    dParamVal[0] = max(1e-3, min(maxA, dParamVal[0]));
+                }
+                else if (idxParam == 1) // parameter b
+                {
+                    // Make sure b is a positive integer.
+                    iParamVal[1] = max(1, iParamVal[1]);
+                }
+                return 0;
+            }
+            case IDM_NMODEL_EXP:
+            {
+                if (idxParam == 0) // parameter a
+                {
+                    // Make sure 0 < a < 1.
+                    dParamVal[0] = max(1e-3, min(1-1e-3, dParamVal[0]));
+                }
+                return 0;
+            }
+            case IDM_NMODEL_UNIFORM:
+            {
+                if (idxParam == 0) // start point
+                {
+                    // Make sure start <= end.
+                    dParamVal[0] = min(dParamVal[1], dParamVal[0]);
+                }
+                else if (idxParam == 1) // end point
+                {
+                    // Make sure end >= start.
+                    dParamVal[1] = max(dParamVal[0], dParamVal[1]);
+                }
+                return 0;
+            } 
+            case IDM_NMODEL_SANDP:
+            {
+                if (idxParam == 0) // white probability
+                {
+                    double maxWhite = 1 - dParamVal[1];
+                    // Make sure total probability not greater than 1.
+                    dParamVal[0] = min(maxWhite, max(0, dParamVal[0]));
+                }
+                else if (idxParam == 1) // black probability
+                {
+                    double maxBlack = 1 - dParamVal[0];
+                    // Make sure total probability not greater than 1.
+                    dParamVal[1] = min(maxBlack, max(0, dParamVal[1]));
+                }
+                return 0;
+            }
             default:
                 return 0;
             }
@@ -5277,7 +5529,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
     }
     case WM_DESTROY:
         // Not we have created custom pens for transfer-func window.
-        if (nFilterType >= IDM_TFUNC_ILPF)
+        if (nFilterType >= IDM_TFUNC_ILPF && nFilterType < IDM_NMODEL_GAUSSIAN)
         {
             for (int i = 0; i < _countof(markerPens); ++i)
             {
@@ -5300,6 +5552,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         // Make the menu selectable again since the window is closed.
         EnableMenuItem(gMenu, IDM_DOMAIN, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
         EnableMenuItem(gMenu, IDM_TRANSFER_FUNC, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
+        EnableMenuItem(gMenu, IDM_NOISE_MODEL, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
         DrawMenuBar(gMainWnd); // Force the main window to repaint the menu.
         SetFocus(gMainWnd); // Move focus to main window in case of accident hide.
         return 0;
@@ -5836,6 +6089,14 @@ HMENU myLoadMainMenu()
         OPT_______,
         OPT_MIDEND, IDM_TFUNC_HOMO,         L'同', L'态', L'滤', L'波', L'_', L'(', L'高', L'斯', L'拟', L'合', L')', 0,
 
+        OPT_TOPLEV,                         L'噪', L'声', L'模', L'型', 0,
+        OPT_MIDDLE, IDM_NMODEL_GAUSSIAN,    L'高', L'斯', L'分', L'布', 0,
+        OPT_MIDDLE, IDM_NMODEL_RAYLEIGH,    L'瑞', L'利', L'分', L'布', 0,
+        OPT_MIDDLE, IDM_NMODEL_ERLANG,      L'爱', L'尔', L'兰', L'拟', L'合', 0,
+        OPT_MIDDLE, IDM_NMODEL_EXP,         L'指', L'数', L'分', L'布', 0,
+        OPT_MIDDLE, IDM_NMODEL_UNIFORM,     L'均', L'匀', L'分', L'布', 0,
+        OPT_MIDEND, IDM_NMODEL_SANDP,       L'椒', L'盐', L'冲', L'激', 0,
+
 #define MY_EASTER_EGG_TEXT \
 L'~', L'%', L'?', L'…', L',', L'#', L' ', L'*', L'\'', L'☆', L'&', L'℃', L'$', L'︿', L'★', L'?'
 
@@ -5975,6 +6236,7 @@ void myEnableOperationMenus()
     EnableMenuItem(gMenu, IDM_GRAY, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
     EnableMenuItem(gMenu, IDM_DOMAIN, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
     EnableMenuItem(gMenu, IDM_TRANSFER_FUNC, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
+    EnableMenuItem(gMenu, IDM_NOISE_MODEL, MF_ENABLED | MF_HILITE | MF_BYPOSITION);
 }
 
 void myDisableOperationMenus()
@@ -5987,6 +6249,7 @@ void myDisableOperationMenus()
     EnableMenuItem(gMenu, IDM_GRAY, MF_GRAYED | MF_BYPOSITION);
     EnableMenuItem(gMenu, IDM_DOMAIN, MF_GRAYED | MF_BYPOSITION);
     EnableMenuItem(gMenu, IDM_TRANSFER_FUNC, MF_GRAYED | MF_BYPOSITION);
+    EnableMenuItem(gMenu, IDM_NOISE_MODEL, MF_GRAYED | MF_BYPOSITION);
 }
 
 void myInitFileDialogInfo(HWND hwnd)
@@ -8006,6 +8269,173 @@ void myThresholdProcess(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT8 thre
             else // There's no need to change alpha channel anyway.
             {
                 pDst[idx].R = pDst[idx].G = pDst[idx].B = 255;
+            }
+        }
+}
+
+double myErf(double x)
+{
+    if (x == 0) return 0;
+    double sgn = x > 0 ? 1 : -1;
+
+    double pi = 3.14159;
+
+    double x2 = x * x;
+    double ax2 = 8 * (pi - 3) / (3 * pi * (4 - pi)) * x2;
+
+    return sgn * sqrt(1 - exp(-x2 * (4 / pi + ax2) / (1 + ax2)));
+}
+
+double myErfInverse(double x)
+{
+    if (x == 0) return 0;
+    double sgn = x > 0 ? 1 : -1;
+
+    double pi = 3.14159;
+    
+    double a = 8 * (pi - 3) / (3 * pi * (4 - pi));
+    double pia = pi * a;
+    double ln1x2 = log(1 - x * x);
+
+    return sgn * sqrt(sqrt(pow(2 / pia + ln1x2 / 2, 2) - ln1x2 / a) - (2 / pia + ln1x2 / 2));
+}
+
+void myApplyGaussianNoise(MyBGRA* data, MyBmpInfo* info, double u, double sigma)
+{
+    srand(time(NULL));
+
+    // Generate gaussian distribution from uniform.
+    // 
+    // If X ~ N(u, sigma), then F(X) ~ U(0, 1),
+    // so F_inv(U) ~ X, i.e. probit(p) ~ X.
+    // 
+    // Gaussian_CDF(x) = 1/2 * [1 + erf((x-u) / (sqrt(2) * sigma))]
+    // Gaussian_CDF_inv(p) = sqrt(2) * sigma * erf_inv(2*p - 1) + u
+
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            // Step 1: get a random variable of U(0, 1).
+            double W = rand() / (double)RAND_MAX;
+
+            // Step 2: compute X with given inverse CDF.
+            double X = 1.41421 * sigma * myErfInverse(2 * W - 1) + u;
+
+            UINT idx = i + j * info->nWidth;
+
+            double noised = data[idx].R + X;
+            // Step 3: apply noise to target pixel data.
+            data[idx].R = (UINT8)max(0, min(255, noised));
+            data[idx].G = data[idx].B = data[idx].R;
+            data[idx].A = 255; // Keep opaque by default.
+        }
+}
+
+void myApplyRayleighNoise(MyBGRA* data, MyBmpInfo* info, double a, double b)
+{
+    srand(time(NULL));
+
+    // Generate rayleigh distribution from uniform.
+    //
+    // Rayleigh_CDF(x) = 1 - e^(-(x-a)^2 / b), if x >= a.
+    // Rayleigh_CDF_inv(p) = a + sqrt(-b * ln(1-p)), if 0 <= p <= 1.
+
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            // Step 1: get a random variable of U(0, 1).
+            double W = rand() / (double)RAND_MAX;
+
+            // Step 2: compute X with given inverse CDF.
+            double X = a + sqrt(-b * log(1 - W));
+
+            UINT idx = i + j * info->nWidth;
+
+            double noised = data[idx].R + X;
+            // Step 3: apply noise to target pixel data.
+            data[idx].R = (UINT8)max(0, min(255, noised));
+            data[idx].G = data[idx].B = data[idx].R;
+            data[idx].A = 255; // Keep opaque by default.
+        }
+}
+
+void myApplyErlangNoise(MyBGRA* data, MyBmpInfo* info, double a, int b)
+{
+    // TODO: support Erlang noise model.
+}
+
+void myApplyExponentialNoise(MyBGRA* data, MyBmpInfo* info, double a)
+{
+    srand(time(NULL));
+
+    // Generate rayleigh distribution from uniform.
+    //
+    // Exponential_CDF(x) = 1 - e^(-a * x), if x >= 0.
+    // Exponential_CDF_inv(p) = -ln(1 - p) / a, if 0 <= p <= 1.
+
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            // Step 1: get a random variable of U(0, 1).
+            double W = rand() / (double)RAND_MAX;
+
+            // Step 2: compute X with given inverse CDF.
+            double X = -log(1 - W) / a;
+
+            UINT idx = i + j * info->nWidth;
+
+            double noised = data[idx].R + X;
+            // Step 3: apply noise to target pixel data.
+            data[idx].R = (UINT8)max(0, min(255, noised));
+            data[idx].G = data[idx].B = data[idx].R;
+            data[idx].A = 255; // Keep opaque by default.
+        }
+}
+
+void myApplyUniformNoise(MyBGRA* data, MyBmpInfo* info, double start, double end)
+{
+    srand(time(NULL));
+
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            // Get a random variable of U(0, 1).
+            double W = rand() / (double)RAND_MAX;
+
+            UINT idx = i + j * info->nWidth;
+
+            double noised = data[idx].R + (W * (end - start) + start);
+            // Apply noise to target pixel data.
+            data[idx].R = (UINT8)max(0, min(255, noised));
+            data[idx].G = data[idx].B = data[idx].R;
+            data[idx].A = 255; // Keep opaque by default.
+        }
+}
+
+void myApplySaltAndPepperNoise(MyBGRA* data, MyBmpInfo* info, double salt, double pepper)
+{
+    srand(time(NULL));
+
+    for (UINT i = 0; i < info->nWidth; ++i)
+        for (UINT j = 0; j < info->nHeight; ++j)
+        {
+            // Get a random variable of U(0, 1) and remove probability of intact.
+            double W = rand() / (double)RAND_MAX - (1 - salt - pepper);
+
+            UINT idx = i + j * info->nWidth;
+
+            if (W > 0)
+            {
+                if (W < salt)
+                {
+                    data[idx].R = 255;
+                }
+                else // pepper
+                {
+                    data[idx].R = 0;
+                }
+                data[idx].G = data[idx].B = data[idx].R;
+                data[idx].A = 255; // Keep opaque by default.
             }
         }
 }
