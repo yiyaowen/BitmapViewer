@@ -14,6 +14,7 @@
 // Disable sign match warnings.
 #pragma warning(disable : 4018)
 // Disable type casting warnings.
+#pragma warning(disable : 4244)
 #pragma warning(disable : 4311)
 #pragma warning(disable : 4312)
 // Disable security func warnings.
@@ -23,6 +24,8 @@
 // Disable buffer read/write warnings.
 #pragma warning(disable : 6385)
 #pragma warning(disable : 6386)
+// Allow mismatched wWinMain annotations.
+#pragma warning(disable : 28251)
 
 #define myAssert(Expression) \
     if ((Expression) == NULL) \
@@ -5625,8 +5628,8 @@ LRESULT CALLBACK AppAboutWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 
     static MyBmpInfo appIconInfo = { 32, 32 };
 
-    static WCHAR szAppVersion[] = L"BitmapViewer 位图工具 v2.0";
-    static WCHAR szAuthorCopy[] = L"Copyleft (cl) 2022 文亦尧";
+    static WCHAR szAppVersion[] = L"BitmapViewer 位图工具 v2.2";
+    static WCHAR szAuthorCopy[] = L"Copyleft (cl) 2023 文亦尧";
 
     switch (message)
     {
