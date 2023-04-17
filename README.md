@@ -1,6 +1,6 @@
 # BitmapViewer 位图工具
 
-BitmapViewer（BV）是一个使用 C 语言开发的位图查看、处理工具，GUI 使用 Win32 GDI 开发，仅支持 Windows 平台运行。BV 不是一个[图像创作、编辑工具](#2D图形创意软件)，仅支持简单的图像编辑功能（如裁剪、填充等）;BV 作为一个图像处理工具，主要提供了[灰度变换](#灰度变换)、[空域滤波](#空域滤波)、[频域滤波](#频域滤波)、[多图操作](#多图操作)、[模拟噪声](#模拟噪声)等功能。
+BitmapViewer 是一个使用 C 语言开发的位图查看、处理工具。
 
 ![](https://github.com/yiyaowen/BitmapViewer.Image/blob/main/test/result/code_page/about.bmp)
 
@@ -35,7 +35,3 @@ BitmapViewer（BV）是一个使用 C 语言开发的位图查看、处理工具
 4. 指数噪声
 5. 均匀噪声
 6. 椒盐（冲激）噪声
-
-## 2D图形创意软件
-
-Adobe Photoshop（全能）、Adobe Illustrator（矢量绘图）、Blender（开源3D）、Clip Studio（漫画）、Krita（KDE开源）、Aseprite（像素画）、Adobe Animate（帧动画）、Spine（骨骼动画）、Sib Icon Studio（图标制作）……
