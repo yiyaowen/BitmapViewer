@@ -35,3 +35,14 @@ BitmapViewer 是一个使用 C 语言开发的位图查看、处理工具。
 4. 指数噪声
 5. 均匀噪声
 6. 椒盐（冲激）噪声
+
+## 项目构建
+
+按照常规 CMake 使用流程进行构建即可。例如使用 CMake + MSBuild 工具组合如下：
+
+```bat
+> cd Path/to/BitmapViewer
+> mkdir build && cd build
+> cmake ..
+> msbuild BitmapViewer.sln
+```

@@ -24,10 +24,10 @@ MyBmpInfo;
 //-------------------------------------------------------------------------------------------------
 
 // Load BMP image file from disk.
-// 
+//
 // @param szFileName: path to BMP image file.
 // @param pInfo: output the BMP image info.
-// 
+//
 // @return pixel data of BMP Image; NULL if failed.
 //
 MyBGRA* myReadBmp(PCWSTR szFileName, MyBmpInfo* pInfo);
