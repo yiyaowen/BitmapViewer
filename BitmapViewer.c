@@ -226,7 +226,7 @@ UINT myValidWndCount();
 RECT myGetSecondWndInitSize();
 
 // Process the image with logarithm transform: z = c * log(1 + r)
-// 
+//
 // @param pData: the origin image to process.
 // @param pInfo: points to image pixel info.
 // @param c: see the formula listed above.
@@ -234,7 +234,7 @@ RECT myGetSecondWndInitSize();
 void myLogarithmTrans(MyBGRA* pData, MyBmpInfo* pInfo, double c);
 
 // Process the image with gamma transform: z = r^gamma
-// 
+//
 // @param pData: the origin image to process.
 // @param pInfo: points to image pixel info.
 // @param gamma: see the formula listed above.
@@ -312,11 +312,11 @@ void myDisplayHistRgltFormatLines(HDC hdc, POINT aAnchors[256], UINT nPointCount
 
 // Populate pTargetHist with computed histogram result.
 // Note anchor points are set in window coordinate.
-//  
+//
 // [Conversion Formula]:
 // gray_scale = x - 5 (there's a 5-pixel padding at the left of histogram);
 // P_raw = 256 - y (the window coordinate flips Y-Axis; need to normalize).
-// 
+//
 // @see GtwHistDispWndProc for more info about the magic number above (5, 256).
 //
 // @param pTargetHist: where to store the result.
@@ -344,7 +344,7 @@ RECT myGetSpafGeneWndInitSize();
 // @param pInfo: points to image pixel info.
 // @param xExpandSize: how far out should expand in horizontal.
 // @param yExpandSize: how far out should expand in vertical.
-// 
+//
 // @return the mirrored pixel data buffer.
 //
 MyBGRA* myExpandMirrorImage(MyBGRA* pData, MyBmpInfo* pInfo, UINT xExpandSize, UINT yExpandSize);
@@ -385,17 +385,17 @@ typedef void(*myResultHandler)(
     void* extraData);
 
 // Process the image with a square (m x m) separable filter.
-// 
+//
 // @param pData: destination image buffer to write.
 // @param pSrc: source image buffer to read & process.
 // @param pInfo: points to image pixel info.
 // @param nBorderMode: how the filter populate border pixels.
 // @param halfLen: length of square convolution core.
-// 
+//
 // @param fnHorz: custom handler for each pixel in horizontal stride.
 // @param fnVert: custom handler for each pixel in vertical stride.
 // @param fnResult: custom handler to get final target result for each pixel.
-// 
+//
 // @param horzExtraData, vertExtraData, resultExtraData: [ used to pass custom data for specific filter. ]
 //
 void mySquareSeparableFilter(MyBGRA* pData, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT nBorderMode, int halfLen,
@@ -407,24 +407,24 @@ void mySquareSeparableFilter(MyBGRA* pData, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT
 
 // Process the image with a spatial box filter.
 // @see mySquareSeparableFilter for details about MY_FILTER_FUNC_PARAMS.
-// 
+//
 // @param iNormCoef_m: also known as box size (square core, m x m).
 //
 void myDomainBoxFilter(MY_FILTER_FUNC_PARAMS, int iNormCoef_m);
 
 // Process the image with a spatial gaussian filter.
 // @see mySquareSeparableFilter for details about MY_FILTER_FUNC_PARAMS.
-// 
+//
 // @param sigma: standard deviation of gaussian function (used for blur grade).
 // @param blurRadius: also known as half length (square core, [2r+1] x [2r+1]).
-// 
+//
 // In general, core size (2*blurRadius) would better be floor(6*sigma) to match 3-sigma position.
 //
 void myDomainGaussianFilter(MY_FILTER_FUNC_PARAMS, double sigma, int blurRadius);
 
 // Process the image with a median value filter.
 // @see mySquareSeparableFilter for details about MY_FILTER_FUNC_PARAMS.
-// 
+//
 // @param halfLen: [ core-size = 2 * half-len + 1 ].
 //
 // A non-linear filter, which is very useful for removing pepper noise.
@@ -615,7 +615,7 @@ void mycpExpGammaTrans(MyBGRA* pDst, MyComplex* pSrc, UINT M, UINT N, long doubl
 // @param pSrc: the source image.
 // @param pInfo: points to image pixel info.
 // @param dLogParam: [c] in [c * log(1 + r)].
-// 
+//
 // @return origin calculated power spectral.
 //
 MyComplex* myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam);
@@ -631,7 +631,7 @@ MyComplex* myPowerSpectralFFT(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT
 // @param pSrc: the source image.
 // @param pInfo: points to image pixel info.
 // @param dLogParam: [c] in [c * log(1 + r)].
-// 
+//
 // @return origin calculated phase spectral.
 //
 MyComplex* myPhaseSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long double dLogParam);
@@ -721,7 +721,7 @@ void myTfuncHomomorphicFilter(MyComplex* spectral, MyBmpInfo* info,
 RECT myGetThresholdWndInitSize();
 
 // Perform threshold processing on the image.
-// 
+//
 // Note the related spectral should be discarded after threshold processing.
 // If it is the spectral what you want to modify, use transfer-func instead.
 //
@@ -737,7 +737,7 @@ double myErf(double x);
 double myErfInverse(double x);
 
 // Apply noise with gaussian distribution.
-// 
+//
 // @param u: mean value.
 // @param sigma: standard deviation.
 //
@@ -777,7 +777,7 @@ void myApplyExponentialNoise(MyBGRA* data, MyBmpInfo* info, double a);
 void myApplyUniformNoise(MyBGRA* data, MyBmpInfo* info, double start, double end);
 
 // Apply salt & pepper noise.
-// 
+//
 // @param salt: white pixel probability.
 // @param pepper: black pixel probability.
 //
@@ -794,11 +794,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLine, int nShowCmd)
 #endif
 {
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED);
+
     MSG msg;
     WNDCLASS wndclass;
 
     gInstance = hInstance;
-    
+
     // Query system metrics info.
     gCxIcon = GetSystemMetrics(SM_CXICON);
     gCyIcon = GetSystemMetrics(SM_CYICON);
@@ -1354,7 +1356,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                     int tmpImgH = selectArea.bottom - selectArea.top;
                     // Note image Y-axis is flipped.
                     int yStartIdx = gBmpInfo.nHeight - selectArea.top - tmpImgH;
-                     
+
                     // From window coordinate to image coordinate.
                     int tmpCsorX = csorCurrX - 18 + abs(xImgAnchor);
                     int tmpCsorY = csorCurrY - 18 + abs(yImgAnchor);
@@ -1570,7 +1572,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
 #define MY_SET_CURSOR_ELIF(Btn_Handle, Cursor_ID) else if MY_SET_CURSOR(Btn_Handle, Cursor_ID)
 
             // Check whether above the image.
-            
+
             // Clamp to valid image area for these tool operations.
             if (pt.x >= 18 && pt.x < min(tmpImgRightMost, tmpWndRightMost) &&
                 pt.y >= 18 && pt.y < min(tmpImgBottomMost, tmpWndBottomMost))
@@ -1647,7 +1649,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             // Display image from left top corner of main window.
             myDisplayImage(hMemDC, 18, 18, max(0, validWidth), max(0, validHeight),
                            xImgAnchor, abs(min(0, tmpImgY)) + yImgAnchor, gImage, &gBmpInfo);
-            
+
             // Display selected rect frame (if verified).
             if (selectArea.left != 0 || selectArea.right != 0 || selectArea.top != 0 || selectArea.bottom != 0)
             {
@@ -2108,7 +2110,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                 NULL,
                 gInstance,
                 NULL);
-            return 0; 
+            return 0;
         }
         // space-domain
         case IDM_SPAF_BOX:
@@ -2410,7 +2412,7 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
     static HWND btnSpeReconMainPhaseSubPowerFFT;
 
     static LONG yMostBottom;
-    
+
     switch (message)
     {
     case WM_CREATE:
@@ -3011,7 +3013,7 @@ LRESULT CALLBACK SecondWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                         // Update min, max values.
                         tmpMin = min(tmpImage[idx], tmpMin);
                         tmpMax = max(tmpImage[idx], tmpMax);
-                    } 
+                    }
 
                 MY_NORMALIZE_SUB_IMG(tmpMin, tmpMax);
             }
@@ -3401,7 +3403,7 @@ LRESULT CALLBACK GrayTransWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         EnableMenuItem(gMenu, IDM_GRAY, MF_GRAYED | MF_BYPOSITION);
 
         // Allocate memory for image data of child window.
-        image = (MyBGRA*)malloc(sizeof(MyBGRA) * gBmpInfo.nWidth * gBmpInfo.nHeight); 
+        image = (MyBGRA*)malloc(sizeof(MyBGRA) * gBmpInfo.nWidth * gBmpInfo.nHeight);
         myAssert(image);
 
         // Acquire selected menu item text.
@@ -3848,7 +3850,7 @@ LRESULT CALLBACK GtwHistDispWndProc(HWND hwnd, UINT message, WPARAM wParam, LPAR
         int tmpVerticalPadding = 12;
         // Create regulate-histogram button.
         btnRgltHist = CreateWindow(
-            L"button", 
+            L"button",
             L"直方图规定化",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             266, // 5 + 256 + 5
@@ -4185,7 +4187,7 @@ LRESULT CALLBACK GtwHistDispWndProc(HWND hwnd, UINT message, WPARAM wParam, LPAR
 * When we want to introduce a new type of filter, we only need to designate the count
 * of parameter it needs and set detailed parameter key and value later in switch-case.
 */
-void myCreateParamWidgets(HWND hwnd, int nParamCount, int xLeftPos, HWND lblParam[10], HWND edtParam[10])    
+void myCreateParamWidgets(HWND hwnd, int nParamCount, int xLeftPos, HWND lblParam[10], HWND edtParam[10])
 {
     for (int i = 0; i < nParamCount; ++i)
     {
@@ -4292,14 +4294,14 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
 
     static MyBGRA* image = NULL;
     static MyComplex* spectral = NULL;
-    
+
     static HWND btnApply;
     static UINT nFilterType;
 
     static HWND btnSaveMain;
 
     static HWND b3sBorderMode;
-    
+
     // Where the right panel should start in horizontal.
     static UINT xBottomPanelRight = 0;
     // Where the bottom panel should start in vertical.
@@ -4321,7 +4323,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
     static int iParamVal[20];
     static double dParamVal[20];
     static int xParamVal[20], yParamVal[20];
-    
+
     // How many key-value pairs need for each filter type?
     static int nParamCount[] =
     {
@@ -4995,7 +4997,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
                 // Return to handle mouse move logic after update text.
                 if (message == WM_MOUSEMOVE) goto end_update_marker_center_edit_text;
             }
-            
+
             // There's no need to erase since double-buffer is enabled.
             InvalidateRect(hwnd, NULL, FALSE);
         }
@@ -5473,7 +5475,7 @@ LRESULT CALLBACK DomainFilterWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
                     dParamVal[1] = max(dParamVal[0], dParamVal[1]);
                 }
                 return 0;
-            } 
+            }
             case IDM_NMODEL_SANDP:
             {
                 if (idxParam == 0) // white probability
@@ -6385,7 +6387,7 @@ void myExtractGrayEmpi(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo)
         // ==> Gray = (38 * R + 75 * G + 15 * B) >> 7, (the one we use here).
 
         pDst[idx].R = pDst[idx].G = pDst[idx].B =
-        
+
             (38 * pSrc[idx].R + 75 * pSrc[idx].G + 15 * pSrc[idx].B) >> 7;
 
     MY_END_EXTRACT_GRAY
@@ -6481,7 +6483,7 @@ void myDisplayHistogramResult(HDC hdc, int offsetX, int offsetY, double pHist[25
     // Y-Axis (normalized Pixel Count)
     MoveToEx(hdc, offsetX, offsetY, NULL);
     LineTo(hdc, offsetX, 0);
-    
+
     for (int i = 0; i < 256; i += nGrayScaleStep)
     {
         // Draw each vertical line.
@@ -6499,13 +6501,13 @@ void myDisplayHistogramResult(HDC hdc, int offsetX, int offsetY, double pHist[25
 
 /*
 * How to do histogram equalization for a given image:
-* 
+*
 * r: origin gray scale value.
 * s: equalized gray scale value.
 * L: gray scale range (256 here).
 * k: gray scale index (0 ~ 255 here, r_k, s_k).
 * p(r): probability that a pixel's gray scale is [r].
-* 
+*
 * s_k = (L - 1) SUM_0^k { p(r_k) }
 */
 void myEqualizeHistogram(MyBGRA* pData, MyBmpInfo* pInfo, double pHist[256])
@@ -6538,7 +6540,7 @@ void myDisplayHistRgltFormatLines(HDC hdc, POINT aAnchors[256], UINT nPointCount
 
     HGDIOBJ originPen = SelectObject(hdc, CreatePen(PS_SOLID, 1, RGB(255, 0, 0)));
     for (i = 0; i < nPointCount - 1; ++i)
-    {        
+    {
         // Draw each intermidiate line.
         MoveToEx(hdc, aAnchors[i].x, aAnchors[i].y, NULL);
         LineTo(hdc, aAnchors[i + 1].x, aAnchors[i + 1].y);
@@ -6598,18 +6600,18 @@ void myComputeRgltHistFormat(double pTargetHist[256], POINT aAnchors[256], UINT 
 
 /*
 * How to do histogram regulation for a given image:
-* 
+*
 * @see Histogram-Equalization, we have the formula:
-* 
+*
 * s_k = (L - 1) SUM_0^k { p(r_k) } = P(r)           (1)
-* 
+*
 * Besides, we already know the regulated target (in histogram format),
 * so it's easy to write the similar histogram-equalization formula:
-* 
+*
 * s_k = (L - 1) SUM_0^k { p(z_k) } = G(r)           (2)
-* 
+*
 * where [s_k] is equalized result of expected target [z_k].
-* 
+*
 * The basic idea of histogram regulation is that we believe that the equalization results
 * of the origin image and the target image should share the same probability distribution,
 * which means that [s_k, (1)] and [s_k, (2)] is equal in the sense of probabilistic value,
@@ -6621,7 +6623,7 @@ void myRegulateHistogram(MyBGRA* pData, MyBmpInfo* pInfo, double pHist[256], dou
 
     // r: origin gray scale, ranges 0 ~ 255.
     // s: target gray scale, ranges 0 ~ 255.
-    // 
+    //
     // P(r): equalized gray scale, computed from pHist.
     // G(s): regulated gray scale, computed from pTargetHist.
     //
@@ -6903,7 +6905,7 @@ MyBGRA* myExpand2xCopyImage(MyBGRA* pData, MyBmpInfo* pInfo)
 /*
 * We can compute horizontal and vertical pixel strides separately
 * to improve performance since the convolution core is separable (rank = 1).
-* 
+*
 * For example, suppose origin convolution core is [m] by [n]:
 * Ordinary complexity: [m] x [n] for each core......O( n^2 )
 * Separable complexity: [m] + [n] for each core.....O( n   )
@@ -7056,7 +7058,7 @@ void myDomainBoxFilter(MyBGRA* pData, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT nBord
 
 /*
 * Domain Gaussian Filter
-* 
+*
 * Convolution Core (take 3 x 3 as example):
 * suppose K = 1, sigma = 1, blurRadius = 1:
 *                [ 0.3679 ][ 0.6065 ][ 0.3679 ]
@@ -7112,7 +7114,7 @@ void myDomainGaussianFilter(MY_FILTER_FUNC_PARAMS, double sigma, int blurRadius)
     for (i = -blurRadius; i <= blurRadius; ++i)
         for (j = -blurRadius; j <= blurRadius; ++j)
             K += pow(2.71828, (i * i + j * j) * _one_2sigma2);
-    
+
 
     // Process convolution indirectly.
     mySquareSeparableFilter(pData, pSrc, pInfo, nBorderMode, blurRadius,
@@ -7168,15 +7170,15 @@ void myDomainMedianFilter(MyBGRA* pData, MyBGRA* pSrc, MyBmpInfo* pInfo, UINT nB
 
     // Note we have allocated memory for candidate buffer.
     free(candidates);
-} 
+}
 
 /*
 * Laplace Operator, 2nd derivative.
-* 
+*
 * [ -1 ][ -1 ][ -1 ]
 * [ -1 ][ +8 ][ -1 ]
 * [ -1 ][ -1 ][ -1 ]
-* 
+*
 * There're other formats of Laplace operators, but we select this one for briefness.
 */
 void myDomainLaplaceFilter(MY_FILTER_FUNC_PARAMS)
@@ -7223,12 +7225,12 @@ void myDomainLaplaceFilter(MY_FILTER_FUNC_PARAMS)
 
 /*
 * Sobel Operator, 1st derivative.
-* 
+*
 * ( X-Axis )            ( Y-Axis )
 * [ -1 ][ -2 ][ -1 ]    [ -1 ][ +0 ][ +1 ]
 * [ +0 ][ +0 ][ +0 ]    [ -2 ][ +0 ][ +2 ]
 * [ +1 ][ +2 ][ +1 ]    [ -1 ][ +0 ][ +1 ]
-* 
+*
 * M(x,y) = { [(z7 + 2z8 + z9) - (z1 + 2z2 + z3)]^2  +
 *            [(z3 + 2z6 + z9) - (z1 + 2z4 + z7)]^2 }^(1/2)
 */
@@ -7448,7 +7450,7 @@ void mycpFFT(MyComplex* pData, UINT R, UINT incre)
 
     // Rearrange results by bit reversing.
     // For example, for 8-dot FFT of (radix 2) frequency decimation:
-    // 
+    //
     // x(t)    bit reverse  X(f)
     // 0, 000   -------->   0, 000
     // 1, 001   -------->   4, 100
@@ -7586,7 +7588,7 @@ void mycpIFFT(MyComplex* pData, UINT R, UINT incre)
 
     // Rearrange results by bit reversing.
     // For example, for 8-dot FFT of (radix 2) frequency decimation:
-    // 
+    //
     // x(t)    bit reverse  X(f)
     // 0, 000   -------->   0, 000
     // 1, 001   -------->   4, 100
@@ -7615,7 +7617,7 @@ void mycpIFFT(MyComplex* pData, UINT R, UINT incre)
             pData[idx2] = temp;
         }
     }
-    
+
     dNormCoef = 1.0L / N;
     // Normalize results with dot count.
     for (i = 0; i < N; ++i)
@@ -7857,7 +7859,7 @@ MyComplex* myPowerSpectral(MyBGRA* pDst, MyBGRA* pSrc, MyBmpInfo* pInfo, long do
 
     // Convert complex to RGB.
     mycpLogarithmTrans(pDst, result, pInfo->nWidth, pInfo->nHeight, dLogParam);
-    
+
     // Note we have allocated memory for complex buffer data.
     free(buffer);
 
@@ -8295,7 +8297,7 @@ double myErfInverse(double x)
     double sgn = x > 0 ? 1 : -1;
 
     double pi = 3.14159;
-    
+
     double a = 8 * (pi - 3) / (3 * pi * (4 - pi));
     double pia = pi * a;
     double ln1x2 = log(1 - x * x);
@@ -8308,10 +8310,10 @@ void myApplyGaussianNoise(MyBGRA* data, MyBmpInfo* info, double u, double sigma)
     srand(time(NULL));
 
     // Generate gaussian distribution from uniform.
-    // 
+    //
     // If X ~ N(u, sigma), then F(X) ~ U(0, 1),
     // so F_inv(U) ~ X, i.e. probit(p) ~ X.
-    // 
+    //
     // Gaussian_CDF(x) = 1/2 * [1 + erf((x-u) / (sqrt(2) * sigma))]
     // Gaussian_CDF_inv(p) = sqrt(2) * sigma * erf_inv(2*p - 1) + u
 
